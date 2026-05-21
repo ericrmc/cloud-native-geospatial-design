@@ -1,4 +1,4 @@
-# Cloud-Native Spatial Platform — Design Documentation
+# Cloud-Native Geospatial Reference Architecture
 
 A complete, implementation-independent description of a serverless geospatial platform for hosting and serving vector data, raster data, and reviewed dataset editing, behind a single authorisation layer.
 

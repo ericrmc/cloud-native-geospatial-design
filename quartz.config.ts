@@ -8,7 +8,7 @@ import * as Plugin from "./quartz/plugins"
  */
 const config: QuartzConfig = {
   configuration: {
-    pageTitle: "Cloud-Native Geospatial Platform — Design",
+    pageTitle: "Cloud-Native Geospatial Reference Architecture",
     pageTitleSuffix: "",
     enableSPA: true,
     enablePopovers: true,

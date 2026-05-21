@@ -1,4 +1,4 @@
-# Cloud-Native Geospatial Platform — Design
+# Cloud-Native Geospatial Reference Architecture
 
 Vendor-ready design corpus for an AWS-native serverless geospatial platform: vector data, raster data, network routing, and reviewed editing, behind a single authorisation layer. Sixteen documents, ~4,900 lines, code-independent.
 
