@@ -125,6 +125,8 @@ The OGC API Features specification includes a transactions extension. The platfo
 
 Some deployments may choose to omit the transactions class from the OGC API's declared conformance entirely, presenting a read-only OGC surface and routing all writes through the editing pipeline. This is the simpler and recommended stance.
 
+> *Why this was built rather than adopted.* At the time of this design, no standards-compliant OGC stack offered GeoJSON feature editing over object-store-backed providers with validation, review gates, and audit history. [pygeoapi](https://pygeoapi.io/) is the closest peer for an OGC API server, and its read-side support is mature, but its transactions extension implementation did not cover object-store-resident providers (only PostgreSQL). The platform's editing pipeline ([11 Editing Pipeline](11_EDITING_PIPELINE.md)) fills that gap rather than duplicating what the read-side OGC servers do well.
+
 ## Conformance classes
 
 A minimal deployment declares conformance to:

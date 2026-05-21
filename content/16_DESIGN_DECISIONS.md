@@ -19,6 +19,25 @@ These are the lessons that informed the decisions below. Where a decision exists
 
 ---
 
+## Peer stacks and prior art
+
+The platform was designed in a landscape of standards-compliant geospatial stacks. Several were evaluated explicitly; the decisions that follow are easier to read with that context in hand. Canonical URLs for each are in [18 Glossary and References](18_GLOSSARY_AND_REFERENCES.md).
+
+| Stack | What it is | Relationship to this design |
+|---|---|---|
+| **[eoAPI](https://eoapi.dev/)** | Development Seed's reference assembly of stac-fastapi + titiler-pgstac + tipg + stac-auth-proxy on AWS, deployed via `eoapi-cdk`. Used by NASA IMPACT, MAAP, VEDA. | The closest peer assembly. This design *adopted* the stac-fastapi mental model and TiTiler as raster substrate, *diverged* on data layout (no PostgreSQL/pgSTAC), and *built* the parts eoAPI does not provide (custom transactional editing pipeline, custom WMTS proxy with TIME dimension, unified auth across every backend). |
+| **[pygeoapi](https://pygeoapi.io/)** | Python OGC API reference implementation covering Features, Coverages, Tiles, Processes, EDR, and Records. Broadly adopted in government and OSGeo deployments. | Considered for the OGC surface. Read-side support is mature; its transactions extension implementation did not, at the time of this design, cover GeoJSON feature editing over object-store-backed providers. That gap is the reason this platform built a custom editing pipeline rather than adopting pygeoapi as the OGC server. |
+| **[tipg](https://developmentseed.org/tipg/)** | Development Seed's single-service OGC API Features + Tiles server over PostGIS, with CQL2 support. | Eliminated by D1 (no PostgreSQL in the read path). The capabilities tipg provides are absorbed into DuckDB + GeoParquet plus the GraphQL query layer. |
+| **[stac-fastapi](https://stac-utils.github.io/stac-fastapi/) + [pgSTAC](https://github.com/stac-utils/pgstac)** | Standard STAC API server over PostgreSQL/PostGIS. The platform's prior incarnation. | Replaced. The registry in DynamoDB is the catalogue; a thin Lambda renders the STAC contract over it. |
+| **[Martin](https://martin.maplibre.org/)** | Rust vector tile server backed by PostGIS or PMTiles. | Replaced by go-pmtiles per D5. |
+| **[pg_featureserv](https://github.com/CrunchyData/pg_featureserv) / [pg_tileserv](https://github.com/CrunchyData/pg_tileserv)** | CrunchyData's lightweight Go OGC Features and vector tile servers over PostGIS. | Eliminated by D1. Same role as tipg and Martin in the previous-stack landscape. |
+| **[MapServer](https://mapserver.org/) / [GeoServer](https://geoserver.org/)** | The mature C and Java OGC heavyweights. Full WMS, WFS, WCS, WMTS, plus increasingly OGC APIs. | Considered for WMTS/WMS specifically. Both are heavy, configuration-driven, and require their own data layer or per-dataset config. The custom WMTS/WMS proxy in this design (registry-driven, no per-dataset config files) was chosen as a thinner alternative; full WMS features (GetFeatureInfo, SLD styling) were deliberately not implemented. The platform interoperates with these servers as data sources via WFS sync rather than replacing them in every deployment. |
+| **[MapProxy](https://mapproxy.org/) / [ldproxy](https://github.com/interactive-instruments/ldproxy) / [GeoNode](https://geonode.org/)** | Tile-caching proxy, linked-data OGC API server, and Django geospatial CMS respectively. | Not adopted; mentioned for completeness. Each occupies a niche this platform does not target. |
+
+The platform's positioning, in one line: **no GeoServer, no MapServer, no PostgreSQL, no manual ETL** — the standards-compliant capabilities those tools provide are absorbed into S3-native serving plus a thin proxy and a reviewed editing pipeline.
+
+---
+
 ## Data and storage
 
 ### D1. Serve all spatial data directly from S3; no spatial database in the read path
@@ -71,7 +90,7 @@ These are the lessons that informed the decisions below. Where a decision exists
 
 **Prior iteration.** The platform originally ran **Martin** (Rust, PostgreSQL-backed) for vector tiles. Martin's PostgreSQL dependency conflicted with D1; Martin's PMTiles support did exist but only re-read the file index at process startup, so any update to a PMTiles file required a service restart. go-pmtiles refreshes automatically on ETag change, which composes cleanly with the atomic-swap promotion pattern (D5 in [11 Editing Pipeline](11_EDITING_PIPELINE.md)).
 
-**Alternatives.** A database-backed tile generator (introduces a database; not aligned with D1). Pre-rendered tile pyramids in S3 as individual objects (massive object count, harder lifecycle, no atomic-swap pattern).
+**Alternatives.** [pg_tileserv](https://github.com/CrunchyData/pg_tileserv) — CrunchyData's lightweight PostGIS-backed vector tile server; same DB conflict as Martin. A database-backed tile generator more broadly (introduces a database; not aligned with D1). Pre-rendered tile pyramids in S3 as individual objects (massive object count, harder lifecycle, no atomic-swap pattern).
 
 ### D6. Tippecanoe for PMTiles generation
 

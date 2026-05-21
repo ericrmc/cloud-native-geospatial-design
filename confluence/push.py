@@ -65,6 +65,7 @@ PAGE_ORDER = [
     "15_map_client.xml",
     "16_design_decisions.xml",
     "17_further_directions.xml",
+    "18_glossary_and_references.xml",
 ]
 
 

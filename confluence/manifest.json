@@ -67,6 +67,10 @@
     "source": "17_FURTHER_DIRECTIONS.md",
     "title": "17 — Further Directions"
   },
+  "18_glossary_and_references.xml": {
+    "source": "18_GLOSSARY_AND_REFERENCES.md",
+    "title": "18 — Glossary and References"
+  },
   "index.xml": {
     "source": "index.md",
     "title": "Cloud-Native Spatial Platform — Design Documentation"

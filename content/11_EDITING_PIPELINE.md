@@ -6,6 +6,8 @@ This is the most complex subsystem in the platform. It is also where the platfor
 
 The pipeline is built from **AWS Step Functions** orchestrating **transient ECS tasks on Fargate** and **AWS Lambda** functions, reading and writing **S3** and **DynamoDB**.
 
+> *Why this was built rather than adopted.* No standards-compliant OGC stack at the time of this design provided object-store-resident GeoJSON / GeoParquet feature editing with validation, review gates, and audit history in the form needed. [pygeoapi](https://pygeoapi.io/) covers the read side but did not (then) implement transactions for object-store providers; [GeoServer](https://geoserver.org/)'s WFS-T requires a database; [tipg](https://developmentseed.org/tipg/) is read-only. The editing pipeline below fills that gap. See [Peer stacks and prior art](16_DESIGN_DECISIONS.md) in [16 Design Decisions](16_DESIGN_DECISIONS.md) for the wider landscape.
+
 > **Prior iteration.** An earlier version of the pipeline had no edit sessions and no per-dataset queueing: each upload triggered an independent pipeline run, which meant two near-simultaneous edits to the same dataset could overlap their partition writes and produce corrupted source GeoParquet. The session model, the state machine, and the per-dataset concurrency limit (one active job, others queued) were introduced as a single piece of work after that class of corruption was observed. The reviewed-editing variant with delta and difference PMTiles arrived shortly after, in response to a need for human approval before cadastral data was promoted to live.
 
 ## The lifecycle, top to bottom
