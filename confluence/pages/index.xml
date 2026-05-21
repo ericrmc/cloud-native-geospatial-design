@@ -1,3 +1,4 @@
+<p><em>Compiled May 2026 — see Timeline and currency for the dating context.</em></p>
 <p>A complete, implementation-independent description of a serverless geospatial platform for hosting and serving vector data, raster data, and reviewed dataset editing, behind a single authorisation layer.</p>
 <h1>What this document set is</h1>
 <p>A vendor-ready design artefact. It describes <em>what</em> the platform is, <em>why</em> each design choice was made, and <em>how</em> the components fit together. It is not a code guide, a tutorial, or a record of any specific implementation. A team reading this set should be able to construct an equivalent platform — in their preferred cloud, languages, and frameworks — and arrive at substantively the same behaviour.</p>

@@ -1,5 +1,7 @@
 # Cloud-Native Geospatial Reference Architecture
 
+*Compiled May 2026 — see [Timeline and currency](#timeline-and-currency) for the dating context.*
+
 A complete, implementation-independent description of a serverless geospatial platform for hosting and serving vector data, raster data, and reviewed dataset editing, behind a single authorisation layer.
 
 ## What this document set is
