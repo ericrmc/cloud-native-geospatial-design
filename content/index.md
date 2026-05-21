@@ -86,3 +86,15 @@ A brief survey of the closest equivalents on Google Cloud and Azure is given in 
 This is a *direction* document, not a record of a proven implementation. The original prototype was not production-reviewed and is not being handed over. Anyone implementing against this set should treat it as a well-considered starting point: the decisions in [15 Design Decisions](16_DESIGN_DECISIONS.md) are the load-bearing ones, but every component admits substitution as long as the contracts in [02 Architecture](02_ARCHITECTURE.md), [03 Authorisation](03_AUTHORISATION.md), and [04 Data Layout](04_DATA_LAYOUT.md) are preserved.
 
 Several decisions documented here are informed by **prior iterations** that were tried and replaced during the prototype's life. Where a previous shape failed or proved over-engineered, the relevant document explains the lesson learned. These are not abstract preferences; they are scars.
+
+## Timeline and currency
+
+This design is a snapshot of considered work, not eternal truth. The research and prototype work spanned roughly seven months:
+
+- **November–December 2025** — exploratory phase. Evaluation of [GeoServer Cloud](16_DESIGN_DECISIONS.md) as a possible foundation; first attempts at PMTiles serving; the initial Aurora PostgreSQL + pgSTAC shape that would later be removed.
+- **February 2026** — the platform's public git history begins. First working PMTiles and raster stack lands; Martin → go-pmtiles switch follows; database stack deleted in favour of S3-native formats; DynamoDB-backed authoriser introduced.
+- **March 2026** — the most active month. GraphQL query layer added; OGC Features API refactored from Fargate-with-DuckDB into a Lambda façade; edit sessions, per-dataset concurrency, reviewed editing with delta/diff PMTiles, SCD2 history, and SQL-based bulk editing all land. Internal-only ALB and VPC Link migration completed.
+- **April 2026** — final tweaks and consolidation.
+- **May 2026** — this design corpus assembled.
+
+Seven months is enough time for the AWS, OGC, and open-source landscape to move. Several technology claims here may already have been overtaken — Aurora Serverless v2 added true scale-to-zero late in this window (see the callout under [D1 in 16 Design Decisions](16_DESIGN_DECISIONS.md)); Bedrock AgentCore matured rapidly; OpenSearch Serverless pricing shifted; mermaid macro names in Confluence Cloud changed providers. Where the corpus has caught up, it says so. Where it has not, treat every concrete tech claim as **true when written, not true forever**. Re-check the canonical sources in [18 Glossary and References](18_GLOSSARY_AND_REFERENCES.md) before committing to a build path. The [closing note in 17 Further Directions](17_FURTHER_DIRECTIONS.md#a-note-on-dates) bookends this point.

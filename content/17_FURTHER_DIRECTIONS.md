@@ -147,3 +147,11 @@ To borrow the framing from [10 Discovery](10_DISCOVERY.md):
 **Where the work is heaviest.** The first three (semantic discovery, geocoding, point clouds) extend patterns and substrates the platform already uses — moderate effort, fits naturally. The middle three (3D, computer vision, agents) introduce new substrates with their own operational shapes. The last five (field capture, reports, subscriptions, change detection, live data) introduce new workflows with substantial product design work alongside the engineering.
 
 These are doors, not roads. A future team reading this set should treat each section as a starting point — enough to spark a design conversation, not enough to commit to a build without one.
+
+## A note on dates
+
+The research that informed this corpus began in November 2025 and the corpus itself was compiled in May 2026 — see [Timeline and currency](index.md#timeline-and-currency) on the index page for the full arc. The ideas in this chapter were sketched within that window. Several of them depend on AWS services and open-source projects that were themselves new at the time of writing: Bedrock AgentCore had only recently reached general availability; OpenSearch Serverless's geospatial story was still maturing; Aurora Serverless v2's scale-to-zero arrived mid-window; mermaid macro vendors in Confluence Cloud were in flux.
+
+Cloud-service landscapes move on the order of months. By the time anyone picks up this set, several of the technology callouts here will have shifted — service names may change, pricing models may evolve, new substrates may emerge, and the gaps these sketches address may have closed (or new gaps opened in their place). **The shape of each sketch is more durable than the specific tech named within it.** Re-check the canonical sources in [18 Glossary and References](18_GLOSSARY_AND_REFERENCES.md) before committing to a build path, and treat the dating in each section as one factor among several when judging fit.
+
+If you find yourself reading this set more than eighteen months after its compilation date, the right next step is to look at what has changed in the underlying services since, not to take any single technology recommendation at face value. The design choices in [16 Design Decisions](16_DESIGN_DECISIONS.md) — the *why* of each call — age more slowly than the *what*.
