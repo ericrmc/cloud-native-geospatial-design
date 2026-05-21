@@ -152,6 +152,7 @@ These are the standards-compliant geospatial stacks worth being aware of when co
 - **[eoAPI](https://eoapi.dev/)** — Development Seed's reference stack bundling pgSTAC, TiTiler, and tipg; the closest peer assembly to this platform. NASA IMPACT, MAAP, and VEDA build on it.
 - **[GeoNode](https://geonode.org/)** — Django-based geospatial CMS layered on GeoServer.
 - **[GeoServer](https://geoserver.org/)** — Java-based OGC services server (WMS, WFS, WCS, WMTS, plus OGC APIs).
+- **[GeoServer Cloud](https://github.com/geoserver/geoserver-cloud)** — Spring Boot microservices refactor of GeoServer for cloud-native ECS/Kubernetes deployment. Trialled here and rejected for specific gaps (private-S3 COG reads, SOAP mosaic generation, UI friction); see [Peer stacks and prior art](16_DESIGN_DECISIONS.md) for the full assessment.
 - **[ldproxy](https://github.com/interactive-instruments/ldproxy)** — Java OGC API server emphasising linked-data and HTML output.
 - **[MapProxy](https://mapproxy.org/)** — Python tile-caching proxy for WMS/WMTS layers.
 - **[MapServer](https://mapserver.org/)** — long-standing C-based OGC web map server.
