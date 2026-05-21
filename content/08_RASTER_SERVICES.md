@@ -272,13 +272,13 @@ The four steps, in flow:
 
 ```mermaid
 flowchart LR
-    SRC[("Source bucket<br/>raw GeoTIFFs")] --> P1["1. Parallel gdal_translate<br/>(COG driver, 4–8 workers,<br/>resumable, skip-existing)"]
+    SRC[("Source bucket<br/>raw GeoTIFFs")] --> P1["1) Parallel gdal_translate<br/>(COG driver, 4–8 workers,<br/>resumable, skip-existing)"]
     P1 --> S3C[("cogs/<br/>COGs in S3")]
-    S3C --> P2["2. Overview / pyramid mosaic<br/>(gdalbuildvrt → gdal_translate)"]
+    S3C --> P2["2) Overview / pyramid mosaic<br/>(gdalbuildvrt → gdal_translate)"]
     P2 --> S3C
-    S3C --> P3["3. MosaicJSON construction<br/>(grid-encoded names or<br/>cogeo-mosaic library)"]
+    S3C --> P3["3) MosaicJSON construction<br/>(grid-encoded names or<br/>cogeo-mosaic library)"]
     P3 --> S3M[("mosaics/<br/>MosaicJSON")]
-    S3C & S3M --> P4["4. Dataset registration<br/>(POST /rest/datasets)"]
+    S3C & S3M --> P4["4) Dataset registration<br/>(POST /rest/datasets)"]
     P4 --> DDB[(DynamoDB datasets table)]
     DDB --> SERVE["Live serving<br/>(TiTiler, WMTS proxy, Coverages)"]
     S3C --> SERVE
