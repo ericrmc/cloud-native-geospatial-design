@@ -57,6 +57,8 @@ The platform's positioning, in one line: **no GeoServer, no MapServer, no Postgr
 
 **Revisit if.** Live transactional spatial writes become a requirement, or analytical workloads on highly normalised data exceed what DuckDB can handle.
 
+> *Modern serverless databases — a fair update.* Since this decision was made, Aurora Serverless v2 has added true scale-to-zero, and newer entrants like [Neon](https://neon.tech/) ship with it as a default. The original cost-floor argument that pushed this platform off PostgreSQL has softened. For workloads that genuinely fit a relational database — transactional joins, mutable rows, complex constraints, mature ecosystem tooling — one of these is now a reasonable choice, and the rest of this platform's serverless patterns still compose around it. What remains is the day-two overhead any database carries: version patching, schema migrations, connection-pool and proxy tuning, per-environment capacity scaling, and the cross-project user and role management that relational engines do not make easy. None of that is fatal — many teams happily pay it for the relational model — but it is the asymmetry that justified going database-less here. The pattern is improving; if your workload calls for a database, treat that improvement as real and re-evaluate.
+
 ### D2. Single object-storage bucket with prefixes, not multiple buckets
 
 **Decision.** One bucket holds COGs, PMTiles, GeoParquet sources, drafts, landing uploads, history, and metadata. Organisation is by prefix.
