@@ -1,0 +1,66 @@
+{
+  "01_principles.xml": {
+    "source": "01_PRINCIPLES.md",
+    "title": "01 — Principles"
+  },
+  "02_architecture.xml": {
+    "source": "02_ARCHITECTURE.md",
+    "title": "02 — Architecture"
+  },
+  "03_authorisation.xml": {
+    "source": "03_AUTHORISATION.md",
+    "title": "03 — Authorisation"
+  },
+  "04_data_layout.xml": {
+    "source": "04_DATA_LAYOUT.md",
+    "title": "04 — Data Layout"
+  },
+  "05_vector_tiles.xml": {
+    "source": "05_VECTOR_TILES.md",
+    "title": "05 — Vector Tiles"
+  },
+  "06_ogc_features_api.xml": {
+    "source": "06_OGC_FEATURES_API.md",
+    "title": "06 — OGC API Features"
+  },
+  "07_query_layer.xml": {
+    "source": "07_QUERY_LAYER.md",
+    "title": "07 — Query Layer"
+  },
+  "08_raster_services.xml": {
+    "source": "08_RASTER_SERVICES.md",
+    "title": "08 — Raster Services"
+  },
+  "09_routing.xml": {
+    "source": "09_ROUTING.md",
+    "title": "09 — Routing"
+  },
+  "10_discovery.xml": {
+    "source": "10_DISCOVERY.md",
+    "title": "10 — Discovery"
+  },
+  "11_editing_pipeline.xml": {
+    "source": "11_EDITING_PIPELINE.md",
+    "title": "11 — Editing Pipeline"
+  },
+  "12_deployment.xml": {
+    "source": "12_DEPLOYMENT.md",
+    "title": "12 — Deployment"
+  },
+  "13_operations.xml": {
+    "source": "13_OPERATIONS.md",
+    "title": "13 — Operations"
+  },
+  "14_client_integration.xml": {
+    "source": "14_CLIENT_INTEGRATION.md",
+    "title": "14 — Client Integration"
+  },
+  "15_design_decisions.xml": {
+    "source": "15_DESIGN_DECISIONS.md",
+    "title": "15 — Design Decisions"
+  },
+  "index.xml": {
+    "source": "index.md",
+    "title": "Cloud-Native Spatial Platform — Design Documentation"
+  }
+}

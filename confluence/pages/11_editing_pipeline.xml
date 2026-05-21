@@ -1,0 +1,219 @@
+<p>The editing pipeline is how new data and changes to existing data enter the platform. It is asynchronous by design: a user submits an edit, the pipeline validates and processes it, and the result is atomically promoted to live serving. Edits to high-trust datasets pass through a human review step before promotion.</p>
+<p>This is the most complex subsystem in the platform. It is also where the platform's value beyond "serving static data" lives.</p>
+<p>The pipeline is built from <strong>AWS Step Functions</strong> orchestrating <strong>transient ECS tasks on Fargate</strong> and <strong>AWS Lambda</strong> functions, reading and writing <strong>S3</strong> and <strong>DynamoDB</strong>.</p>
+<blockquote><p><strong>Prior iteration.</strong> An earlier version of the pipeline had no edit sessions and no per-dataset queueing: each upload triggered an independent pipeline run, which meant two near-simultaneous edits to the same dataset could overlap their partition writes and produce corrupted source GeoParquet. The session model, the state machine, and the per-dataset concurrency limit (one active job, others queued) were introduced as a single piece of work after that class of corruption was observed. The reviewed-editing variant with delta and difference PMTiles arrived shortly after, in response to a need for human approval before cadastral data was promoted to live.</p></blockquote>
+<h1>The lifecycle, top to bottom</h1>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart TB
+    A[Editor opens edit session] --> B[Editor uploads data]
+    B --> C[Editor finalises session]
+    C --> D{Per-dataset<br/>concurrency check}
+    D -->|other job active| Q[Queue]
+    D -->|clear| V[Validation task]
+    Q -.->|dequeue when prior job<br/>completes| V
+    V --> VS{Validation<br/>severity}
+    VS -->|errors| F[Mark failed]
+    VS -->|pass / warnings| G[Generation task]
+    G --> RR{Review<br/>required?}
+    RR -->|yes| R[Park as awaiting review]
+    RR -->|no| P[Promotion function]
+    R --> H[Reviewer approves]
+    H --> G2[Final generation if needed]
+    G2 --> P
+    P --> DONE[Live]
+    P --> HIS[Append SCD2 history]
+    P --> EVT[Append event log]
+    P --> NEXT[Dequeue next queued job]]]></ac:plain-text-body></ac:structured-macro>
+<h1>End-to-end edit journey</h1>
+<p>The same flow, drawn against a time axis with AWS participants — from an editor's first click to a fresh tile arriving in a colleague's browser:</p>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
+    autonumber
+    participant Editor
+    participant CF as CloudFront
+    participant GW as API Gateway
+    participant EDIT as Editing API (Lambda)
+    participant S3
+    participant SQS as SQS trigger (Lambda)
+    participant SFN as Step Functions
+    participant VAL as Validation task (Fargate)
+    participant GEN as Generation task (Fargate)
+    participant PROMO as Promotion (Lambda)
+    participant VTS as go-pmtiles (Fargate)
+    participant Viewer
+
+    Editor->>GW: POST /edit-sessions {dataset_id}
+    GW->>EDIT: Authorised request
+    EDIT-->>Editor: session_id
+    Editor->>GW: POST /edit-sessions/{id}/uploads
+    GW->>EDIT: Authorised request
+    EDIT-->>Editor: S3 presigned PUT URL
+    Editor->>S3: PUT landing/{dataset}/{job}/data.fgb
+    Editor->>GW: POST /edit-sessions/{id}/finalize
+    GW->>EDIT: Authorised request
+    EDIT->>S3: (object-created event already queued)
+    S3-->>SQS: ObjectCreated event
+    SQS->>SFN: StartExecution
+    SFN->>VAL: RunTask (DuckDB checks)
+    VAL->>S3: Read landing/, write drafts/checks/results.json
+    VAL-->>SFN: pass / warnings
+    SFN->>GEN: RunTask (Tippecanoe)
+    GEN->>S3: Read source/, write pmtiles/staging/{dataset}.pmtiles
+    GEN->>S3: Write drafts/{session}/delta.pmtiles + diff.pmtiles
+    GEN-->>SFN: artefacts ready
+    Note over SFN: (For reviewed datasets,<br/>park here until approval.)
+    SFN->>PROMO: Invoke
+    PROMO->>S3: CopyObject staging → pmtiles/{dataset}.pmtiles (atomic)
+    PROMO->>CF: CreateInvalidation /tiles/vector/{dataset}/*
+    PROMO->>S3: Append history/ + metadata/dataset_events/
+    PROMO-->>SFN: complete
+    Viewer->>CF: GET tile (z/x/y)
+    CF->>VTS: Cache miss after invalidation
+    VTS->>S3: Byte-range read (new ETag)
+    VTS-->>CF: Fresh tile bytes
+    CF-->>Viewer: Fresh tile]]></ac:plain-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the editor's HTTP work is short and synchronous; everything heavy happens behind a job identifier the editor can poll. From the viewer's perspective, the swap looks like the tile just changed on the next refresh.</p></ac:rich-text-body></ac:structured-macro>
+<h1>Components</h1>
+<p>The pipeline is composed of small services with well-defined responsibilities:</p>
+<table><tbody><tr><th>Component</th><th>AWS substrate</th><th>Role</th></tr><tr><td><strong>Editing API</strong></td><td>Lambda</td><td>User-facing write endpoints — manages edit sessions, generates S3 presigned upload URLs, handles finalisation, accepts reviewer approvals, and manages validation rules.</td></tr><tr><td><strong>Upload gate</strong></td><td>Lambda</td><td>Lightweight authorisation check for direct bulk uploads (non-session edits), returning S3 presigned URLs.</td></tr><tr><td><strong>SQS trigger</strong></td><td>Lambda</td><td>Bridges S3 <code>landing/</code> object-created events (delivered via SQS) into <code>StartExecution</code> calls on the Step Functions state machine.</td></tr><tr><td><strong>State machine</strong></td><td>Step Functions</td><td>Orchestrates validation → generation → promotion. Retry policies with exponential backoff cover transient <code>EcsAmazonECSException</code> and <code>States.Timeout</code> errors. Catch blocks route to the failure handler.</td></tr><tr><td><strong>Validation task</strong></td><td>Fargate transient ECS task</td><td>Runs DuckDB schema, geometry, and user-defined SQL checks against an uploaded dataset. 4 vCPU, 16 GB, 100 GiB ephemeral storage.</td></tr><tr><td><strong>Generation task</strong></td><td>Fargate transient ECS task</td><td>Produces serving artefacts: full or incremental PMTiles via Tippecanoe, plus delta and difference PMTiles for review. 4 vCPU, 16 GB, 200 GiB ephemeral storage.</td></tr><tr><td><strong>Promotion function</strong></td><td>Lambda</td><td>Atomically swaps staging artefacts into live via S3 <code>CopyObject</code>; issues a CloudFront invalidation; writes SCD2 history and event-log entries; dequeues the next queued job.</td></tr><tr><td><strong>Failure handler</strong></td><td>Lambda</td><td>Step Functions catch target. Marks job and dataset as failed, releases the per-dataset queue.</td></tr><tr><td><strong>Job API</strong></td><td>Lambda</td><td>Read-only view of job state for clients tracking pipeline progress; honours dataset access from the auth context.</td></tr><tr><td><strong>SQL edit executor</strong></td><td>Lambda (3 GiB, 15-minute timeout)</td><td>Performs bulk data corrections via DuckDB SQL, routed through the validation pipeline.</td></tr><tr><td><strong>History vacuum</strong></td><td>Lambda, EventBridge-scheduled</td><td>Compacts per-job SCD2 history files into monthly archives.</td></tr><tr><td><strong>Event log compactor</strong></td><td>Lambda, EventBridge-scheduled</td><td>Compacts per-job event-log files into monthly archives.</td></tr></tbody></table>
+<h1>Edit session state machine</h1>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[stateDiagram-v2
+    [*] --> draft: create session
+    draft --> uploading: request presigned URL
+    uploading --> submitted: finalise
+    submitted --> validating: workflow engine starts
+    validating --> reviewing: review_required and validation passes
+    validating --> approved: not review_required and validation passes
+    validating --> failed: validation errors
+    reviewing --> approved: reviewer approves
+    reviewing --> rejected: reviewer rejects
+    approved --> promoting: promotion function invoked
+    promoting --> promoted: atomic swap complete
+    promoting --> failed: promotion error
+    failed --> uploading: retry
+    promoted --> [*]
+    rejected --> [*]
+    cancelled --> [*]]]></ac:plain-text-body></ac:structured-macro>
+<p>State transitions are guarded by optimistic locking (a version counter on the session) so that concurrent operations cannot leave the session in an inconsistent state. The state machine is enforced by the editing API; the workflow engine writes state transitions only through the editing API's interfaces, never directly to the store.</p>
+<h1>Per-dataset concurrency</h1>
+<p>Only one pipeline job may be active for a given dataset at a time. This prevents:</p>
+<ul><li>Overlapping writes to the same set of GeoParquet partitions.</li><li>Validation against an inconsistent schema version.</li><li>Race conditions in atomic promotion.</li><li>For reviewed datasets: a second edit computing its delta against pre-promotion source data.</li></ul>
+<p><strong>Mechanism</strong>. The DynamoDB datasets table has a <code>pipeline_status</code> field. The jobs table has a <strong>DynamoDB GSI</strong> on <code>(dataset_id, status)</code>. When a new job is submitted, the editing API performs a <code>Query</code> on that GSI for <code>status IN (pending, validating, generating)</code>. If one is found, the new job is created with status <code>queued</code> using a DynamoDB <code>PutItem</code> with a conditional write, and the request returns HTTP 202.</p>
+<p>When a job reaches a terminal state (complete, failed, cancelled), the promotion Lambda (or failure handler, or cancel handler) calls a <code>dequeue_next_job</code> routine that:</p>
+<ol><li>Looks for the oldest job for the same dataset in <code>queued</code> status.</li><li>For datasets with <code>review_required=true</code>, defers if the prior job is in a non-terminal review state (so the new job computes its delta against the post-promotion source, not pre-promotion).</li><li>Transitions the chosen job to <code>pending</code> and invokes the workflow engine.</li></ol>
+<p><strong>Cross-dataset parallelism is preserved.</strong> Independent datasets run their pipelines in parallel; only the same-dataset case is serialised.</p>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> two editors can submit changes to the same dataset at the same time without producing corrupt partitions — the second submission waits politely behind the first rather than racing it.</p></ac:rich-text-body></ac:structured-macro>
+<h1>Validation</h1>
+<p>The validation task performs three layers of checks:</p>
+<ol><li><strong>Schema validation</strong> — every feature must match the dataset's declared JSON Schema. Required fields, allowed values, type constraints.</li><li><strong>Geometry validation</strong> — well-formed geometries, declared CRS matches the dataset's expected CRS, geometries are valid (no self-intersections in polygons), all features have a non-null geometry where required.</li><li><strong>User-defined SQL checks</strong> — checks declared per-dataset and applied in sequence.</li></ol>
+<h2>SQL checks: parameterised templates</h2>
+<p>User-defined checks are SQL templates with declared parameters, stored in the key-value store. Each check has:</p>
+<table><tbody><tr><th>Field</th><th>Meaning</th></tr><tr><td><code>check_id</code></td><td>Identifier</td></tr><tr><td><code>sql_template</code></td><td>DuckDB-compatible SQL with <code>{parameter}</code> placeholders</td></tr><tr><td><code>parameters</code></td><td>Declared parameter list with names, types, and optional defaults</td></tr><tr><td><code>severity</code></td><td><code>error</code> (blocks approval) or <code>warning</code> (informational)</td></tr><tr><td><code>description</code></td><td>Human-readable explanation</td></tr></tbody></table>
+<p>A check must return rows of the form <code>(id, message)</code>. Each row is a violation; an empty result indicates no violation.</p>
+<p><strong>Parameter validation.</strong> Parameter names of type <code>column</code> are validated against the dataset's schema before substitution; this prevents injection.</p>
+<p><strong>Sequences.</strong> Checks are composed into named sequences (<code>base</code>, <code>cadastral</code>, <code>planning_zones</code>, etc.). A dataset references an ordered list of sequences. Common checks (geometry validity, conflict detection) are typically in the <code>base</code> sequence applied to every dataset.</p>
+<p><strong>Built-in conflict-detection check.</strong> Every dataset implicitly carries a check that detects features whose corresponding live row has been updated more recently than the session's source. This prevents the lost-update problem: if two editors prepare overlapping changes, the second to submit gets a conflict report rather than silently overwriting the first's work.</p>
+<p><strong>Execution sandbox.</strong> Each check runs in a sandboxed DuckDB session with no filesystem or network access. A per-check timeout (typically 60 seconds) bounds runaway queries.</p>
+<h2>Validation outcome</h2>
+<p>The validation task writes results to <code>drafts/{dataset}/{session}/checks/results.json</code> and emits a summary to the session record:</p>
+<ac:structured-macro ac:name="code"><ac:parameter ac:name="language">json</ac:parameter><ac:plain-text-body><![CDATA[{
+  "checks_run": 12,
+  "errors": [
+    {"check_id": "...", "feature_id": "...", "message": "..."}
+  ],
+  "warnings": [...]
+}]]></ac:plain-text-body></ac:structured-macro>
+<p>Errors fail the validation; warnings are surfaced but do not block.</p>
+<h1>Generation</h1>
+<p>The generation task produces serving artefacts. It runs as a container task with significant ephemeral storage (typically 100–200 GiB) because some intermediate steps (FlatGeobuf, Tippecanoe) write large temporary files.</p>
+<h2>Full generation</h2>
+<p>For <code>replace</code> operations or first-time generation: reads all partitions for the dataset, builds the full PMTiles archive.</p>
+<ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[GeoParquet (source/) → FlatGeobuf intermediate → Tippecanoe → PMTiles → pmtiles/staging/]]></ac:plain-text-body></ac:structured-macro>
+<h2>Incremental generation</h2>
+<p>For <code>add</code>, <code>update</code>, <code>patch</code>, <code>delete</code>: reads only the affected partitions, builds a small PMTiles, and <code>tile-join</code>s it into the current live archive. Much faster for large datasets with localised edits.</p>
+<h2>Delta and difference PMTiles (reviewed datasets)</h2>
+<p>For datasets with <code>review_required=true</code>, the generation task additionally produces:</p>
+<table><tbody><tr><th>File</th><th>Content</th></tr><tr><td><code>drafts/{dataset}/{session}/delta.pmtiles</code></td><td>Edited features only, with <code>_edit_op</code> (add/update/delete) and <code>_validation_status</code> tags</td></tr><tr><td><code>drafts/{dataset}/{session}/diff.pmtiles</code></td><td>Geometric differences (spatial subtraction between session and live) with <code>_diff_type</code> tags</td></tr></tbody></table>
+<p>These are small (typically under 1 MB). They are served by the vector tile server under a drafts path so reviewers can render them in a map client with three modes:</p>
+<ul><li><strong>Operations mode</strong> — colour-coded by edit operation.</li><li><strong>Diff mode</strong> — geometric before-and-after.</li><li><strong>Preview mode</strong> — current live data composited with the delta to show the post-promotion state.</li></ul>
+<h1>Promotion</h1>
+<p>The promotion Lambda is invoked by Step Functions after generation succeeds (and, for reviewed datasets, after approval). It performs the following steps, in order:</p>
+<ol><li><strong>Atomic swap.</strong> S3 <code>CopyObject</code> from <code>pmtiles/staging/{dataset}.pmtiles</code> to <code>pmtiles/{dataset}.pmtiles</code>. The go-pmtiles server picks up the new ETag on the next access.</li><li><strong>CloudFront invalidation.</strong> Invalidate <code>/tiles/vector/{dataset}/*</code> and (for datasets exposed via OGC Features) <code>/features/v1/collections/{dataset}/*</code> so edge caches re-fetch.</li><li><strong>History write</strong> (if <code>history_enabled</code>). Append SCD2 delta Parquet and (for updates/deletes) closeout Parquet under <code>history/{dataset}/</code>.</li><li><strong>Event log write.</strong> Append a job-completion event Parquet to <code>metadata/dataset_events/dataset_id={dataset}/</code>.</li><li><strong>Cleanup.</strong> Delete the staging S3 object.</li><li><strong>Job and dataset status updates.</strong> DynamoDB <code>UpdateItem</code> to mark the job <code>complete</code>; reset the dataset's <code>pipeline_status</code> to <code>idle</code>.</li><li><strong>Dequeue.</strong> Invoke <code>dequeue_next_job</code> for the dataset.</li></ol>
+<p>The Lambda is idempotent: a retried invocation finds the live file already in place and continues from the next step. This is essential because Step Functions task retries may double-invoke after a transient error.</p>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> if promotion is interrupted halfway through, retrying it does the same thing again safely — the swap that already happened is a no-op the second time, and the steps that did not happen still complete.</p></ac:rich-text-body></ac:structured-macro>
+<h1>Bulk SQL editing (admin)</h1>
+<p>When a schema change invalidates existing data (a field becomes required, an enum value is removed, a constraint is tightened), re-uploading the entire dataset is impractical for large datasets. The platform offers a bulk SQL editing surface:</p>
+<table><tbody><tr><th>Endpoint</th><th>Purpose</th></tr><tr><td><code>POST /rest/datasets/{id}/sql-edit</code> (with <code>dry_run: true</code>)</td><td>Preview affected rows</td></tr><tr><td><code>POST /rest/datasets/{id}/sql-edit</code></td><td>Execute the edit</td></tr></tbody></table>
+<p>The SQL executor:</p>
+<ol><li>Parses the SQL with a whitelist parser (allow: <code>UPDATE … WHERE …</code>, <code>SELECT</code>, <code>ALTER</code>; deny: <code>DROP TABLE</code>, <code>TRUNCATE</code>, <code>ATTACH</code>, <code>COPY TO</code>).</li><li>For dry runs, executes against a copy of source partitions and reports affected row counts.</li><li>For full executions, writes the result to a drafts location, then runs it through the validation pipeline as if it were a regular edit.</li><li>The pipeline then promotes through the normal flow.</li></ol>
+<p>This is data <strong>repair</strong>, not transformation: the SQL operates on the dataset's own rows, in place, with the same validation and review gates as any edit. It exists because the alternative (re-upload) is operationally impractical at scale.</p>
+<p>Access is restricted to <code>data_manager</code> and <code>platform_admin</code> roles.</p>
+<h1>Schema changes</h1>
+<p>Schema changes are managed through admin endpoints:</p>
+<table><tbody><tr><th>Endpoint</th><th>Purpose</th></tr><tr><td><code>PUT /rest/datasets/{id}/schema</code></td><td>Replace schema</td></tr><tr><td><code>PATCH /rest/datasets/{id}/schema/fields/{name}</code></td><td>Modify a field</td></tr><tr><td><code>DELETE /rest/datasets/{id}/schema/fields/{name}</code></td><td>Remove a field</td></tr></tbody></table>
+<p>Each mutation is preceded by a <strong>breaking-change detection</strong> step. The platform compares the new schema with the current schema and identifies six categories of breaking change:</p>
+<ol><li>Field made required when it was optional.</li><li>Field deleted.</li><li>Type changed.</li><li>Enum values reduced.</li><li>Constraints tightened.</li><li><code>additionalProperties</code> restricted.</li></ol>
+<p>Each detected breaking change includes a suggested DuckDB SQL command that would migrate the data (e.g. <em>"backfill the new required field with this expression"</em>). The mutation is rejected with HTTP 400 unless the caller passes <code>force: true</code>.</p>
+<p>This is a safety net, not a hard constraint. The data manager knows whether the data already satisfies the new schema; <code>force: true</code> is the documented escape hatch.</p>
+<h2>Journey: making a breaking schema change without losing data</h2>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the platform refuses to make a change that would invalidate existing data, hands the data manager a SQL command to fix the data first, and only then lets the schema change through. The two halves — schema and data — never drift apart silently.</p></ac:rich-text-body></ac:structured-macro>
+<p>A data manager realises the <code>parcels</code> dataset needs a <code>council_id</code> field, populated for every row. Currently the field doesn't exist; once added, it must be required.</p>
+<ol><li><strong>Attempt the schema change.</strong> The data manager calls:</li></ol>
+<p>``<code> PATCH /rest/datasets/parcels/schema/fields/council_id { "type": "string", "required": true, "description": "Local government area identifier" } </code>``</p>
+<ol><li><strong>The breaking-change detector intervenes.</strong> Adding a required field to a dataset that already contains rows is a breaking change (existing rows have no value). The Policy API runs the comparator before applying the update, identifies the issue, and returns:</li></ol>
+<p>``<code> HTTP 400 { "error": "breaking_change_detected", "warnings": [ { "type": "field_made_required", "field": "council_id", "affected_rows_estimate": 412034, "suggested_migration": "UPDATE parcels SET council_id = lookup_council_id(geometry) WHERE council_id IS NULL" } ], "force": "set force: true to apply anyway (data will fail validation on next pipeline run)" } </code>``</p>
+<p>The schema is unchanged; nothing has been written.</p>
+<ol><li><strong>The data manager backfills the data first.</strong> They have a separate <code>councils</code> dataset (polygons of local government area boundaries). A spatial join in DuckDB can derive the council ID for every parcel. They preview the SQL edit:</li></ol>
+<p>``<code> POST /rest/datasets/parcels/sql-edit { "sql": "UPDATE parcels SET council_id = (SELECT c.id FROM councils c WHERE ST_Contains(c.geometry, ST_Centroid(parcels.geometry)) LIMIT 1) WHERE council_id IS NULL", "dry_run": true } </code>``</p>
+<p>The SQL Edit Executor parses the SQL against the whitelist, runs it against a copy of source partitions, and reports:</p>
+<p>``<code> { "affected_rows": 412034, "sample_results": [...], "duration_ms": 18750 } </code>``</p>
+<ol><li><strong>The data manager confirms and runs the edit for real.</strong> Same call without <code>dry_run: true</code>. The executor writes results to <code>drafts/parcels/sql-edit-{job_id}/</code>, then routes the draft through the standard editing pipeline (validation → generation → promotion). The validation step applies the existing dataset's validation sequences; the generation step rebuilds the affected PMTiles; the promotion step performs the atomic swap.</li><li><strong>The data manager retries the schema change.</strong> Now every row has a non-null <code>council_id</code>:</li></ol>
+<p>``<code> PATCH /rest/datasets/parcels/schema/fields/council_id { "type": "string", "required": true, "description": "Local government area identifier" } </code>``</p>
+<p>The breaking-change detector runs again, finds the data is now compatible (no null values in the column), and applies the schema update. The dataset's JSON Schema in DynamoDB is updated; future edits will be validated against the new requirement.</p>
+<ol><li><strong>The change propagates.</strong> The next edit submitted to <code>parcels</code> is validated against the new schema. An attempt to submit a feature without <code>council_id</code> is rejected at validation, with a clear error pointing at the offending feature.</li></ol>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
+    autonumber
+    participant DM as Data manager
+    participant POL as Policy API (Lambda)
+    participant DDB as DynamoDB
+    participant SQE as SQL Edit Executor (Lambda)
+    participant SFN as Step Functions
+    participant VAL as Validation task
+    participant GEN as Generation task
+    participant PROMO as Promotion Lambda
+    participant S3
+
+    DM->>POL: PATCH /rest/datasets/parcels/schema/fields/council_id<br/>(required: true)
+    POL->>DDB: GetItem current schema
+    POL->>POL: Compare old vs new<br/>(detect: field_made_required)
+    POL-->>DM: HTTP 400 + suggested SQL migration
+    DM->>SQE: POST /rest/datasets/parcels/sql-edit<br/>(dry_run: true)
+    SQE->>S3: Read source/parcels + source/councils partitions
+    SQE-->>DM: affected_rows: 412034, sample
+    DM->>SQE: POST /rest/datasets/parcels/sql-edit<br/>(dry_run: false)
+    SQE->>S3: Write drafts/parcels/sql-edit-XYZ/
+    SQE->>SFN: StartExecution (validation + generation + promotion)
+    SFN->>VAL: Validate session
+    VAL->>S3: Write source/parcels new partitions
+    SFN->>GEN: Regenerate PMTiles
+    GEN->>S3: Write pmtiles/staging/parcels.pmtiles
+    SFN->>PROMO: Promote
+    PROMO->>S3: CopyObject staging → live
+    PROMO->>DDB: Job complete
+    DM->>POL: PATCH /rest/datasets/parcels/schema/fields/council_id (retry)
+    POL->>DDB: GetItem (data now has council_id everywhere)
+    POL->>POL: No breaking changes detected
+    POL->>DDB: Update schema
+    POL-->>DM: HTTP 200 — schema applied]]></ac:plain-text-body></ac:structured-macro>
+<p><strong>The escape hatch.</strong> A data manager who <em>knows</em> the data is already compatible (for example, the dataset was populated by an external process that has been writing the new column for a week) can pass <code>force: true</code> on the schema PATCH to skip the detector. The detector is a guardrail, not a gate.</p>
+<p><strong>Other breaking-change categories</strong> the detector handles the same way: field deletion (suggest a <code>SELECT * EXCEPT(col)</code> migration), type change (suggest a <code>CAST</code>), enum reduction (suggest a value remap), constraint tightening (suggest a filter), <code>additionalProperties</code> restriction (suggest column pruning).</p>
+<h1>Row-level history (SCD2)</h1>
+<p>When a dataset has <code>history_enabled: true</code>, every promotion appends per-row history under <code>history/{dataset}/</code>. The history records:</p>
+<ul><li>New rows (inserts).</li><li>New versions of updated rows.</li><li>Closeout markers for prior versions of updated or deleted rows.</li></ul>
+<p>The query layer exposes time-travel queries (<code>featureHistory</code>, <code>datasetSnapshot</code>) backed by predicate pushdown on the SCD2 columns.</p>
+<p>A scheduled history vacuum compacts small delta files into monthly archives, keeping the read path performant as datasets accumulate history. Retention is configurable per dataset (default one year).</p>
+<h1>Operational state</h1>
+<p>Operational concerns of the pipeline:</p>
+<table><tbody><tr><th>Concern</th><th>Mechanism</th></tr><tr><td><strong>Dead-letter handling</strong></td><td>An SQS-equivalent dead-letter queue captures uploads whose validation could not be parsed; an alarm fires when it has messages.</td></tr><tr><td><strong>Failure visibility</strong></td><td>The workflow engine's execution history is the audit trail. Plus the dataset event log under <code>metadata/</code>.</td></tr><tr><td><strong>Cancellation</strong></td><td><code>POST /jobs/{id}/cancel</code> transitions the job to <code>cancelled</code> and releases the queue.</td></tr><tr><td><strong>Retry</strong></td><td>A failed session can be retried by uploading a corrected payload; the new job is a separate workflow execution.</td></tr><tr><td><strong>Cleanup</strong></td><td>Lifecycle policies clean up <code>landing/</code> (immediate), <code>pmtiles/staging/</code> (on promotion), <code>drafts/</code> (after 90 days).</td></tr></tbody></table>
+<h1>What this does well</h1>
+<ul><li><strong>Decouples request handling from pipeline work.</strong> Editors do not wait for tile generation.</li><li><strong>Reviewed editing is a state, not a feature.</strong> Adding the approval step does not change the underlying flow.</li><li><strong>Delta and difference visualisation makes reviews tractable.</strong> A reviewer sees what changed without comparing two whole datasets.</li><li><strong>Per-dataset queueing prevents corruption</strong> without per-feature locking.</li><li><strong>SCD2 history is auditable</strong> and queryable without bloating the read path.</li></ul>
+<h1>What it does not do</h1>
+<ul><li><strong>No collaborative real-time editing.</strong> Sessions are coarse-grained; two editors cannot work on the same dataset simultaneously.</li><li><strong>No partial-feature locking.</strong> Conflicts at promotion time are caught by the conflict-detection check, not prevented by upstream locking.</li><li><strong>No transactional multi-dataset edits.</strong> Each dataset has its own pipeline; cross-dataset transactions are out of scope.</li><li><strong>No streaming or live ingest.</strong> All ingest is batch-oriented through the pipeline.</li></ul>

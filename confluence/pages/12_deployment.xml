@@ -1,0 +1,91 @@
+<p>This document describes how the platform is composed, parameterised, and rolled out. Implementations are free to choose their cloud and their infrastructure-as-code framework; the <em>structure</em> described here is what matters.</p>
+<h1>Environments</h1>
+<p>The platform supports three named environments by convention:</p>
+<table><tbody><tr><th>Environment</th><th>Service composition</th><th>Scaling</th><th>Purpose</th></tr><tr><td><code>dev</code></td><td>All service groups</td><td>minimal</td><td>Active development; everything enabled</td></tr><tr><td><code>test</code></td><td>Stable services only</td><td>minimal</td><td>Pre-production validation</td></tr><tr><td><code>prod</code></td><td>Proven services only</td><td>performance</td><td>Production traffic</td></tr></tbody></table>
+<p>Each environment is a separate deployment, with separate resources, names, and (recommended) separate cloud accounts. There are no shared resources across environments.</p>
+<p>A single source repository targets all three environments through context parameters. There is no branching for environment differentiation.</p>
+<h1>Service groups</h1>
+<p>Services are bundled into groups by coupling. Environments toggle groups, not individual services. The canonical groups:</p>
+<table><tbody><tr><th>Group</th><th>Members</th><th>Notes</th></tr><tr><td><code>vector-tiles</code></td><td>Vector tile server</td><td>Standalone</td></tr><tr><td><code>vector-query</code></td><td>Query layer + OGC Features API</td><td>When deployed together, the OGC API is a façade over the query layer; the OGC API can also stand alone (see <ac:link><ri:page ri:content-title="06 — OGC API Features"/><ac:plain-text-link-body><![CDATA[06 OGC Features API]]></ac:plain-text-link-body></ac:link>)</td></tr><tr><td><code>raster</code></td><td>Raster tile server + WMTS/WMS proxy</td><td>Proxy depends on tile server</td></tr><tr><td><code>routing</code></td><td>Routing engine</td><td>Optional; query layer degrades gracefully without it</td></tr><tr><td><code>editing</code></td><td>Editing pipeline + editing API</td><td>The full write path</td></tr><tr><td><code>discovery</code></td><td>STAC API</td><td>Catalogue facade</td></tr><tr><td><code>coverages</code></td><td>OGC Coverages API</td><td>Independent</td></tr><tr><td><code>sync</code></td><td>Dataset sync from external feeds</td><td>Optional; deployment-specific</td></tr></tbody></table>
+<p>Core infrastructure — network, storage, authoriser, API gateway, CDN, monitoring — is always deployed regardless of environment. These are the substrates every service depends on.</p>
+<h1>Scaling modes</h1>
+<p>Each service group is configured by a scaling mode. Three modes are defined:</p>
+<table><tbody><tr><th>Mode</th><th>Behaviour</th></tr><tr><td><code>off</code></td><td>Zero running tasks. Services scale up only on first request. Cost approaches zero.</td></tr><tr><td><code>minimal</code></td><td>One or two tasks per service. Steady-state low cost; first request after idle scales further if needed.</td></tr><tr><td><code>performance</code></td><td>Multiple pre-warmed tasks, higher CPU and memory allocations. Consistent low-latency response; higher cost.</td></tr></tbody></table>
+<p>The mode is a deployment parameter. Different environments typically run in different modes (<code>dev</code> in minimal, <code>prod</code> in performance). The mode is independent of which service groups are deployed.</p>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
+    subgraph dev["Dev environment"]
+        D1["All service groups"]
+        D2["minimal scaling"]
+    end
+    subgraph test["Test environment"]
+        T1["Stable service groups"]
+        T2["minimal scaling"]
+    end
+    subgraph prod["Prod environment"]
+        P1["Proven service groups"]
+        P2["performance scaling"]
+    end]]></ac:plain-text-body></ac:structured-macro>
+<h1>Compute split: Fargate vs Lambda</h1>
+<p>Services are placed on <strong>Fargate</strong> (long-running ECS services or transient ECS tasks) or <strong>Lambda</strong> based on workload characteristics:</p>
+<table><tbody><tr><th>Workload</th><th>Compute</th><th>Rationale</th></tr><tr><td>Heavy data engines (DuckDB, GDAL, Tippecanoe, routing graphs)</td><td>Fargate service</td><td>Long warm-up, persistent caches, large memory footprint</td></tr><tr><td>Tile servers (vector via go-pmtiles, raster via TiTiler)</td><td>Fargate service</td><td>Benefit from warm caches; scale-to-zero supported via desired-count 0</td></tr><tr><td>OGC API Features (standalone shape)</td><td>Lambda</td><td>Thin handler, fast cold start, pay-per-request</td></tr><tr><td>OGC API Features (façade shape)</td><td>Lambda</td><td>Same — the work is in the Fargate query layer</td></tr><tr><td>Authoriser</td><td>Lambda</td><td>Tiny stateless logic; latency-critical</td></tr><tr><td>STAC API</td><td>Lambda</td><td>Read-only over DynamoDB</td></tr><tr><td>Editing API, Upload gate, Job API</td><td>Lambda</td><td>HTTP handlers over DynamoDB</td></tr><tr><td>Promotion function, failure handler</td><td>Lambda</td><td>Step Functions task targets; short execution</td></tr><tr><td>Validation task, generation task</td><td>Fargate transient ECS task</td><td>Long-running computation with large ephemeral storage (100–200 GiB)</td></tr><tr><td>Dataset sync, history vacuum, event log compactor</td><td>Lambda (EventBridge-scheduled)</td><td>Periodic maintenance</td></tr></tbody></table>
+<p><strong>Fargate tasks vs Fargate services.</strong> Transient ECS tasks (started by <code>RunTask</code> from Step Functions for one job, then exit) are distinct from long-running ECS services (managed by ECS Service Auto Scaling, kept warm at the configured desired count). The validation and generation steps use tasks; everything else on Fargate uses services.</p>
+<h1>Network shape</h1>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart TB
+    INET[Internet]
+    CF[CloudFront]
+    APIGW[API Gateway HTTP API]
+    AZ[Lambda Authoriser]
+    VPCL[VPC Link]
+    subgraph VPC["Private VPC"]
+        ALB[Internal ALB]
+        ECS["Fargate tasks & services<br/>(private subnets)"]
+        FN["Lambda functions<br/>(ALB-integrated)"]
+        DDB[(DynamoDB VPC endpoint)]
+        S3EP[(S3 Gateway endpoint)]
+    end
+
+    INET --> CF --> APIGW
+    APIGW --> AZ
+    APIGW --> VPCL --> ALB
+    ALB --> ECS
+    ALB --> FN
+    ECS --> DDB & S3EP
+    AZ --> DDB]]></ac:plain-text-body></ac:structured-macro>
+<p>The internal ALB is <strong>not internet-facing</strong> — it sits in private subnets with a security group that allows ingress only from the <strong>VPC Link</strong> security group. The only ingress to backends is through the API Gateway HTTP API via the VPC Link private integration. This:</p>
+<ul><li>Prevents requests from bypassing the Lambda authoriser.</li><li>Removes the need for per-backend authentication code.</li><li>Reduces the public attack surface to a single component (the API Gateway).</li></ul>
+<blockquote><p><strong>Prior iteration.</strong> The ALB was once <strong>internet-facing</strong>, in public subnets. All traffic was <em>supposed</em> to go through API Gateway for auth, but the ALB was technically reachable directly, bypassing the Lambda authoriser. This was closed in two steps: first restricting the ALB security group to CloudFront IPs only, then moving the ALB to private subnets with VPC Link as the only path. Anyone implementing this design should make the ALB internal-only from day one.</p></blockquote>
+<p>Backends access DynamoDB and S3 through cloud-native <strong>VPC endpoints</strong> (Gateway endpoints for S3 and DynamoDB; Interface endpoints for ECR, CloudWatch Logs, and Secrets Manager where used). No outbound internet egress is required for the read or write paths; this allows the deployment to omit NAT Gateways entirely, eliminating their ~$65/month-per-AZ baseline cost.</p>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> every service the platform talks to lives either inside the VPC or behind a private endpoint, so the cluster doesn't need a paid bridge to the public internet at all.</p></ac:rich-text-body></ac:structured-macro>
+<h1>Promotion model</h1>
+<p>A single source-of-truth branch (<code>main</code>) targets <code>dev</code> automatically on every push. Promotion to <code>test</code> and <code>prod</code> is driven by <strong>tagged releases</strong>:</p>
+<table><tbody><tr><th>Trigger</th><th>Action</th></tr><tr><td>Push to <code>main</code></td><td>Deploy to <code>dev</code> automatically</td></tr><tr><td>Push tag <code>test/{date}</code></td><td>Deploy to <code>test</code> automatically</td></tr><tr><td>Push tag <code>prod/{date}</code></td><td>Deploy to <code>prod</code> (typically requires manual approval)</td></tr></tbody></table>
+<p>Tags are immutable release artefacts; a tag permanently records what was deployed. Hot-fixes follow the same flow (fix on main → tag for test → validate → tag for prod).</p>
+<p>This model eliminates branch drift: there is no dev branch separate from prod, no cherry-picks between environments, no merge conflicts in infrastructure code.</p>
+<h1>Resource sizing guidance</h1>
+<p>Indicative starting points for the container-runtime services in <code>performance</code> mode. Actual sizing depends on data volume and traffic.</p>
+<table><tbody><tr><th>Service</th><th>CPU</th><th>Memory</th><th>Task count</th></tr><tr><td>Raster tile server</td><td>4 vCPU</td><td>8 GB</td><td>10, autoscale to 50 on CPU</td></tr><tr><td>Vector tile server</td><td>1 vCPU</td><td>1 GB</td><td>6, autoscale to 15</td></tr><tr><td>WMTS/WMS proxy</td><td>2 vCPU</td><td>4 GB</td><td>10, autoscale to 20</td></tr><tr><td>Query layer</td><td>4 vCPU</td><td>8 GB</td><td>2, autoscale to 8</td></tr><tr><td>Coverages API</td><td>2 vCPU</td><td>4 GB</td><td>3, autoscale to 10</td></tr><tr><td>Routing engine</td><td>4 vCPU</td><td>8 GB</td><td>2, autoscale to 6</td></tr><tr><td>Validation task (per execution)</td><td>4 vCPU</td><td>16 GB</td><td>100 GB ephemeral storage</td></tr><tr><td>Generation task (per execution)</td><td>4 vCPU</td><td>16 GB</td><td>200 GB ephemeral storage</td></tr></tbody></table>
+<p>Function-runtime services are typically 256–1024 MB memory, with timeouts appropriate to the work (30 seconds for HTTP handlers, 5–15 minutes for batch maintenance jobs).</p>
+<h1>Storage configuration</h1>
+<table><tbody><tr><th>Resource</th><th>Configuration</th></tr><tr><td>Object-storage bucket</td><td>Single bucket; versioning enabled; lifecycle to lower-cost tier after 30 days; cleanup rules for <code>landing/</code>, <code>pmtiles/staging/</code>, <code>drafts/</code></td></tr><tr><td>Key-value tables</td><td>On-demand billing; point-in-time recovery enabled; per-item TTL where applicable (sessions, transient items)</td></tr></tbody></table>
+<h1>Identity provider configuration</h1>
+<p>The identity provider is consumed by configuration:</p>
+<table><tbody><tr><th>Setting</th><th>Value</th></tr><tr><td>Trusted issuers list</td><td>Comma-separated list of OIDC issuer URLs</td></tr><tr><td>JWKS cache TTL</td><td>One hour</td></tr></tbody></table>
+<p>Federation (linking an enterprise IdP to a hosted user pool, or pointing the platform at the enterprise IdP directly) is configured on the IdP side, not in this platform.</p>
+<h1>Observability</h1>
+<p>Every deployment includes:</p>
+<ul><li><strong>Operations dashboard</strong> — load balancer traffic, errors, latency; API gateway metrics; CDN cache hit rate; container CPU/memory/task counts; authoriser invocations and errors; pipeline state machine executions and failures; storage growth.</li><li><strong>Usage dashboard</strong> — per-credential request counts; data egress; per-service request breakdown; feature downloads; tile requests; editing activity.</li><li><strong>Alarms</strong> — 5xx rates on load balancer and targets; latency thresholds on the load balancer; authoriser error rate; container CPU saturation.</li></ul>
+<p>See <ac:link><ri:page ri:content-title="13 — Operations"/><ac:plain-text-link-body><![CDATA[13 Operations]]></ac:plain-text-link-body></ac:link> for the operations and runbook view.</p>
+<h1>IaC structure (AWS CDK reference)</h1>
+<p>The reference implementation uses <strong>AWS CDK</strong> in Python. It is structured as a set of CloudFormation stacks, deployed in a defined order:</p>
+<ol><li><strong>Storage</strong> — buckets, key-value tables.</li><li><strong>Network</strong> — VPC, subnets, security groups, internal load balancer, VPC endpoints.</li><li><strong>Compute infrastructure</strong> — container cluster, task definitions, IAM roles.</li><li><strong>Each service stack</strong> — conditionally instantiated based on the environment's service groups.</li><li><strong>Authoriser stack</strong> — authoriser function, identity provider configuration, policy tables.</li><li><strong>API gateway stack</strong> — gateway, integrations to the load balancer.</li><li><strong>CDN stack</strong> — distribution and cache behaviours.</li><li><strong>Editing pipeline stack</strong> — workflow engine, tasks, related tables.</li><li><strong>Monitoring stack</strong> — dashboards, alarms.</li></ol>
+<p>Each stack is independently deployable. A single-service update (e.g. swap the raster tile server image) updates only its own stack.</p>
+<h1>Reproducibility</h1>
+<p>The deployment is fully described in code. No console operations are required for a fresh deployment. A new environment can be provisioned by:</p>
+<ol><li>Creating the cloud account.</li><li>Bootstrapping the IaC framework.</li><li>Deploying the stacks with the appropriate environment and scaling-mode parameters.</li><li>Running an initial bootstrap script to create the first administrator.</li></ol>
+<p>The time to first-running deployment from a clean account is on the order of an hour. Most of that is cloud provisioning latency.</p>
+<h1>Cross-cloud orientation (AWS is the reference)</h1>
+<p>This platform is designed on AWS and depends on several AWS service features that do not have like-for-like equivalents on other clouds. The table below maps service categories for orientation; porting the platform to another cloud is not a substitution exercise but a redesign at the networking and edge layers.</p>
+<table><tbody><tr><th>AWS (reference)</th><th>Google Cloud (closest)</th><th>Azure (closest)</th></tr><tr><td>S3</td><td>Cloud Storage</td><td>Blob Storage</td></tr><tr><td>DynamoDB</td><td>Firestore (Datastore mode)</td><td>Cosmos DB (Table API)</td></tr><tr><td>CloudFront</td><td>Cloud CDN</td><td>Azure Front Door</td></tr><tr><td>API Gateway HTTP API + Lambda authoriser</td><td>API Gateway + Cloud Run</td><td>API Management + custom policy</td></tr><tr><td>Lambda</td><td>Cloud Functions</td><td>Azure Functions</td></tr><tr><td>Fargate (tasks + services)</td><td>Cloud Run jobs + services</td><td>Container Apps jobs + apps</td></tr><tr><td>Step Functions</td><td>Workflows</td><td>Durable Functions</td></tr><tr><td>Application Load Balancer v2 (path-based + URL rewrite)</td><td>HTTP(S) Load Balancing</td><td>Application Gateway</td></tr><tr><td>VPC Link (private connectivity, API GW → internal ALB)</td><td>Serverless VPC Access + internal LB</td><td>VNet Integration</td></tr><tr><td>Cognito User Pool + post-auth Lambda trigger</td><td>Identity Platform + Cloud Functions hook</td><td>Entra External ID + custom policies</td></tr></tbody></table>
+<p>Features that are AWS-specific and require redesign on other clouds:</p>
+<ul><li><strong>ALB v2 path-based routing with URL rewrite transforms</strong> — Google's HTTP(S) Load Balancing and Azure's Application Gateway both support path-based routing but have different URL-rewrite semantics and different rule-priority models.</li><li><strong>S3 <code>CopyObject</code> atomicity within a bucket</strong> — the substrate for the platform's atomic-swap promotion. Cloud Storage and Blob Storage offer different atomic-write primitives (conditional writes, generation matching).</li><li><strong>API Gateway HTTP API custom-authoriser-to-header parameter mapping</strong> — the design depends on the gateway injecting <code>X-Auth-*</code> headers from the authoriser's response context. Equivalent behaviour on other clouds typically requires a small auth proxy in front of the application.</li><li><strong>DynamoDB single-table design with multiple GSIs</strong> — Firestore and Cosmos DB have different indexing and pricing models; access patterns may need rework.</li><li><strong>CloudFront per-credential cache keying</strong> — header-based cache-key composition for credential headers is straightforward in CloudFront and not trivial in some other CDNs.</li><li><strong>Fargate ephemeral storage up to 200 GiB per task</strong> — Cloud Run and Container Apps have different ephemeral-storage allowances; the generation-task pattern may need an attached filesystem.</li></ul>
+<p>A team building this on a different cloud should treat the <em>contracts</em> in <ac:link><ri:page ri:content-title="02 — Architecture"/><ac:plain-text-link-body><![CDATA[02 Architecture]]></ac:plain-text-link-body></ac:link>, <ac:link><ri:page ri:content-title="03 — Authorisation"/><ac:plain-text-link-body><![CDATA[03 Authorisation]]></ac:plain-text-link-body></ac:link>, and <ac:link><ri:page ri:content-title="04 — Data Layout"/><ac:plain-text-link-body><![CDATA[04 Data Layout]]></ac:plain-text-link-body></ac:link> as portable, and accept that the <em>implementation</em> of edge routing, atomic promotion, and authoriser integration will be cloud-shaped, not transcribed.</p>

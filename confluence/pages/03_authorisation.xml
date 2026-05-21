@@ -1,0 +1,165 @@
+<p>A single authorisation layer sits between every request and every backend. It is implemented as an <strong>API Gateway HTTP API custom authoriser running as a Lambda function</strong> in front of all backends. The Lambda resolves the caller's identity, computes their effective permissions from DynamoDB, returns a permission context, and API Gateway's parameter-mapping feature converts that context into <code>X-Auth-*</code> headers attached to the forwarded request. Backends do not validate tokens, look up policies, or fetch user data; they read the trusted headers off the request.</p>
+<p>This document specifies the authorisation model, the algorithm, and the contracts.</p>
+<h1>Identity sources</h1>
+<p>Two credential types are accepted:</p>
+<p><strong>OIDC JWT</strong> — a bearer token issued by any trusted identity provider. The platform accepts tokens from a configured list of trusted issuers (a <code>TRUSTED_ISSUERS</code> environment variable on the authoriser Lambda). Each issuer publishes a JWKS endpoint; the Lambda fetches and caches signing keys for one hour. Tokens are validated for signature (RS256/RS384/RS512), expiry, issuer, and audience. The claims in the token carry the user identity and the user's IdP group memberships.</p>
+<p>A <strong>Cognito User Pool</strong> is the default identity provider, but any OIDC-compliant external IdP (Entra ID, Auth0, Okta, Google Identity) can be added to the trusted-issuers list. Federation between Cognito and an external IdP is configured on the Cognito side and is transparent to this platform.</p>
+<p><strong>API keys</strong> — opaque tokens issued by the platform itself, stored as SHA-256 hashes in a DynamoDB <code>api-keys</code> table. Each key has an owner (a user or a platform group), an active flag, an optional description, and an issuance timestamp. The raw key is returned only at issuance; the platform stores only the hash.</p>
+<p>Anonymous access is supported for explicitly-public resources (see "Public access" below). Requests with no credential are not rejected at the authoriser; they are resolved to an anonymous identity with access only to public datasets.</p>
+<h1>Three-tier permission model</h1>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
+    subgraph IdP["Identity Provider"]
+        IDG["IdP groups<br/>(in JWT claims)"]
+    end
+
+    subgraph Ceiling["Ceiling Tier"]
+        CEIL["Per-IdP-group:<br/>role_ceiling<br/>scope_ceiling"]
+    end
+
+    subgraph Platform["Platform Tier"]
+        PG["Platform groups"]
+        MEM["User memberships<br/>(role per group)"]
+        DS["Group → datasets"]
+        CL["Group claims"]
+    end
+
+    subgraph Effective["Effective"]
+        ROLE["Effective role<br/>= max(grants) ∩ ceiling"]
+        SCOPE["Effective scope<br/>= ceiling"]
+        DSET["Accessible datasets<br/>= union of group datasets + public"]
+        CLAIMS["Effective claims<br/>= JWT claims + group claims (RLS)"]
+    end
+
+    IDG --> CEIL --> ROLE
+    PG --> MEM --> ROLE
+    PG --> DS --> DSET
+    PG --> CL --> CLAIMS]]></ac:plain-text-body></ac:structured-macro>
+<h2>Tier 1: Ceiling (from the identity provider)</h2>
+<p>Each IdP group the user belongs to maps to a <strong>ceiling</strong> — the maximum role and scope that anyone in that group may receive, regardless of how generously they are granted permissions inside the platform.</p>
+<table><tbody><tr><th>Ceiling field</th><th>Meaning</th></tr><tr><td><code>role_ceiling</code></td><td>The highest role the user may exercise (e.g. <code>data_manager</code>). Inside the platform, no grant may exceed this.</td></tr><tr><td><code>scope_ceiling</code></td><td>The highest scope the user may exercise (e.g. <code>partner</code>, <code>internal</code>). Limits the visibility category of data.</td></tr></tbody></table>
+<p>If the user belongs to multiple IdP groups, the <strong>most permissive</strong> ceiling applies (the maximum role and scope across all groups). The rationale: the IdP is the authority for organisational role; if any IdP group says "this person may act as a <code>data_manager</code>," the platform respects that.</p>
+<p>The ceiling exists so that platform administrators cannot accidentally grant a contractor admin privileges by adding them to the wrong group. The IdP is the upstream constraint.</p>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the IdP sets the ceiling, the platform hands out keys underneath it. A grant inside the platform can never exceed what HR has said about the person upstream.</p></ac:rich-text-body></ac:structured-macro>
+<h2>Tier 2: Platform grants (managed in the platform)</h2>
+<p>Within the ceiling, the platform manages:</p>
+<ul><li><strong>Platform groups</strong> — named collections of users and datasets, with optional default claims attached to the group.</li><li><strong>Memberships</strong> — a user belongs to zero or more platform groups, with a role per group.</li><li><strong>Group datasets</strong> — which datasets each platform group can access.</li><li><strong>Group claims</strong> — key/value pairs attached to a group that flow into the user's effective claims at auth time (used for row-level security; see below).</li></ul>
+<p>Memberships and grants are admin-managed via the policy API. A user gains access to a dataset by being added to a group that has access to that dataset.</p>
+<h2>Tier 3: Effective permission</h2>
+<p>For each request, the authoriser computes:</p>
+<table><tbody><tr><th>Computed</th><th>Algorithm</th></tr><tr><td>Effective role</td><td>The most permissive role across all platform-group memberships, capped at the ceiling.</td></tr><tr><td>Effective scope</td><td>The ceiling scope (scope is not refined by platform groups; the ceiling is authoritative).</td></tr><tr><td>Accessible datasets</td><td>The union of datasets granted by all the user's platform groups, plus datasets explicitly marked public.</td></tr><tr><td>Effective claims</td><td>JWT claims merged with platform-group claims. Group claims override JWT claims when both are present.</td></tr></tbody></table>
+<h1>Roles and scopes</h1>
+<p><strong>Roles</strong> form a hierarchy. Each role implies all lesser roles:</p>
+<table><tbody><tr><th>Role</th><th>Capabilities</th></tr><tr><td><code>platform_admin</code></td><td>All operations. Bypasses row-level security.</td></tr><tr><td><code>data_manager</code></td><td>Manage datasets, schemas, validation rules, and bulk data edits. Bypasses RLS.</td></tr><tr><td><code>publisher</code></td><td>Approve edit sessions (review role).</td></tr><tr><td><code>editor</code></td><td>Create edit sessions, upload data, finalise sessions.</td></tr><tr><td><code>viewer</code></td><td>Read access to authorised datasets, subject to RLS.</td></tr><tr><td><code>public</code></td><td>Read access to datasets explicitly marked public.</td></tr></tbody></table>
+<p><strong>Scopes</strong> are categories of data visibility, not capabilities. They are intended to allow a single dataset registry to host content of different sensitivity:</p>
+<table><tbody><tr><th>Scope</th><th>Meaning</th></tr><tr><td><code>public</code></td><td>Open data, no restriction.</td></tr><tr><td><code>partner</code></td><td>Restricted to identified external partners.</td></tr><tr><td><code>project</code></td><td>Restricted to a specific project group.</td></tr><tr><td><code>internal</code></td><td>Restricted to internal organisational use.</td></tr></tbody></table>
+<p>The scope is currently informational on the authorisation side; it appears in the permission context and is intended to be enforced by individual backends that care about scope-aware filtering. Backends that do not enforce scope rely on the dataset list alone.</p>
+<h1>API keys</h1>
+<p>API keys are the principal mechanism for desktop GIS, scripts, and any client that cannot perform an interactive OIDC sign-in.</p>
+<p><strong>Issuance:</strong></p>
+<ul><li>An admin (or a user via self-service) creates a key with an owner type (<code>user</code> or <code>group</code>) and an owner identifier. The platform generates a random key, computes its SHA-256 hash, stores the hash with the metadata, and returns the raw key once. The raw key is never stored or retrievable thereafter.</li><li>The key's effective permissions are:</li><li><strong>User-scoped keys</strong> receive the <code>viewer</code> role with no datasets unless the user has explicit grants — these are useful for self-service access to public datasets only.</li><li><strong>Group-scoped keys</strong> inherit the group's datasets with the <code>viewer</code> role. This is the canonical way to grant a desktop GIS team access to a set of layers.</li></ul>
+<p><strong>Use:</strong></p>
+<ul><li>Clients send the raw key in an <code>X-Api-Key</code> header (or, where supported, as a query parameter).</li><li>The authoriser hashes the incoming key, looks it up, and proceeds with the resolved owner's permissions.</li></ul>
+<p><strong>Revocation:</strong></p>
+<ul><li>Setting a key's <code>active</code> flag to false revokes it. The authoriser checks <code>active</code> on every cache miss; warm authoriser caches will continue to honour the key for up to one minute (see "Caching" below).</li></ul>
+<h1>Row-level security (RLS)</h1>
+<p>RLS filters individual feature rows within an authorised dataset. It is configured per-dataset and applies only to the OGC Features API. (Vector tiles are byte-served and cannot be row-filtered at the tile layer; this is a known limit of the format.)</p>
+<p><strong>Configuration model</strong>: each RLS rule is <code>(dataset, column, claim, operator)</code>:</p>
+<table><tbody><tr><th>Field</th><th>Meaning</th></tr><tr><td><code>dataset</code></td><td>The dataset the rule applies to.</td></tr><tr><td><code>column</code></td><td>The column in the dataset to filter on.</td></tr><tr><td><code>claim</code></td><td>The claim key from the user's effective claims to compare against.</td></tr><tr><td><code>operator</code></td><td><code>eq</code> (exact match), <code>in</code> (multi-value match), <code>contains</code> (substring).</td></tr></tbody></table>
+<p><strong>Resolution at request time</strong>:</p>
+<ol><li>The authoriser builds the user's effective claims by merging JWT claims and platform-group claims.</li><li>For each authorised dataset, the authoriser fetches the dataset's RLS configuration.</li><li>The configuration is included in the permission context delivered to the OGC Features backend.</li><li>The backend applies the appropriate filter expressions on the dataset's query.</li></ol>
+<p><strong>Example</strong>: a council group has <code>claims: {council_id: "yarra-ranges"}</code>. The shared <code>property_view</code> dataset has an RLS rule <code>(council_id, council_id, eq)</code>. Members of the council group see only rows where the dataset's <code>council_id</code> column equals <code>"yarra-ranges"</code>. A user belonging to multiple councils gets a multi-value match.</p>
+<p><strong>Bypass</strong>: roles <code>platform_admin</code> and <code>data_manager</code> bypass RLS — they see every row, by design, because their job is to manage the data.</p>
+<h2>Journey: a dataset author configures multi-tenant access</h2>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the dataset author decides which column distinguishes "your rows" from "everyone else's rows", points it at a claim that users will carry, and from that moment on the platform pre-filters every query and every feature response.</p></ac:rich-text-body></ac:structured-macro>
+<p>A property dataset holds rows for many councils. Each council should only see its own rows. There is no per-user configuration — the council <em>is</em> the unit of access.</p>
+<ol><li><strong>The dataset is already in the registry.</strong> Each row has a <code>council_id</code> column carrying values like <code>yarra-ranges</code>, <code>casey</code>, <code>boroondara</code>. The values are stable identifiers, not display names.</li><li><strong>The data manager defines the row-level-security rule on the dataset:</strong></li></ol>
+<p>``<code> POST /rest/auth/datasets/property_view/rls { "column": "council_id", "claim":  "council_id", "operator": "eq" } </code>``</p>
+<p>The rule says: at query time, restrict the dataset to rows where the <code>council_id</code> column matches the caller's <code>council_id</code> claim, exactly.</p>
+<ol><li><strong>The data manager creates one platform group per council, each carrying its own claim value:</strong></li></ol>
+<p>``` POST /rest/auth/groups { "name": "Yarra Ranges Council", "claims": { "council_id": "yarra-ranges" } }</p>
+<p>POST /rest/auth/groups { "name": "Casey Council", "claims": { "council_id": "casey" } } ```</p>
+<p>The claim is attached to the <em>group</em>, not to individual users. Adding a council staff member to the Yarra Ranges group automatically gives them the <code>council_id=yarra-ranges</code> claim at auth time.</p>
+<ol><li><strong>The data manager links the dataset to every council group:</strong></li></ol>
+<p>``<code> POST /rest/auth/groups/yarra-ranges/datasets  { "dataset_id": "property_view" } POST /rest/auth/groups/casey/datasets         { "dataset_id": "property_view" } </code>``</p>
+<p>All councils have access to <code>property_view</code>, but they will see different rows.</p>
+<ol><li><strong>Council staff are invited or self-onboard via the IdP.</strong> On first sign-in the post-authentication Lambda converts the invitation into a membership in the appropriate council group.</li><li><strong>At query time:</strong> a Yarra Ranges user requests <code>/features/v1/collections/property_view/items</code>. The Lambda authoriser merges group claims into the effective claims, sees <code>council_id=yarra-ranges</code>, looks up the dataset's RLS rule, and includes it in the permission context as part of <code>X-Auth-User-Claims</code>. The OGC Features API translates the RLS rule into a DuckDB <code>WHERE council_id = 'yarra-ranges'</code> clause appended to the partition-pruned query. The user receives only Yarra Ranges rows.</li><li><strong>A staff member who belongs to multiple councils</strong> (a regional officer assigned to several groups) gets a multi-value claim: <code>council_id=["yarra-ranges","casey"]</code>. The OGC Features API uses an <code>IN</code> predicate, returning rows from both councils.</li></ol>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
+    autonumber
+    participant DM as Data manager
+    participant POL as Policy API (Lambda)
+    participant DDB as DynamoDB
+    participant USER as Council staff
+    participant AZ as Lambda Authoriser
+    participant API as OGC Features API
+    participant S3
+
+    DM->>POL: POST /rest/auth/datasets/property_view/rls<br/>(column council_id, claim council_id, eq)
+    POL->>DDB: PutItem DATASET#property_view / RLS#council_id
+    DM->>POL: POST /rest/auth/groups (Yarra Ranges,<br/>claims: council_id=yarra-ranges)
+    POL->>DDB: PutItem GROUP#yarra-ranges / META
+    DM->>POL: POST /rest/auth/groups/yarra-ranges/datasets<br/>(property_view)
+    POL->>DDB: PutItem GROUP#yarra-ranges / DATASET#property_view
+    Note over USER,API: Later — a council user queries the dataset
+    USER->>AZ: Bearer JWT (Yarra Ranges group member)
+    AZ->>DDB: Query CEILING, MEMBER, GROUP claims, RLS
+    DDB-->>AZ: claims={council_id:yarra-ranges},<br/>rls={council_id eq council_id}
+    AZ-->>API: X-Auth-User-Datasets, X-Auth-User-Claims
+    API->>S3: SELECT ... WHERE council_id='yarra-ranges'<br/>+ DISTINCT ON (id)
+    S3-->>API: Filtered partitions
+    API-->>USER: Only Yarra Ranges rows]]></ac:plain-text-body></ac:structured-macro>
+<p><strong>Operators supported on RLS rules:</strong> <code>eq</code> (exact match), <code>in</code> (multi-value match — useful when a single user belongs to multiple groups with the same claim key), <code>contains</code> (substring — useful for hierarchical identifiers).</p>
+<p><strong>A note on vector tiles.</strong> RLS applies to the OGC Features API (and to the query layer where deployed). Vector tiles cannot be filtered per-row at the tile layer — PMTiles is byte-served and the server cannot evaluate predicates. If a dataset must be tightly row-restricted, expose it through OGC Features only, not as a vector tile layer. For datasets where row visibility differs only by category (not by tenant), build separate tile layers per category instead.</p>
+<h1>Public access</h1>
+<p>Datasets may be marked as publicly accessible. Public access is the platform's way to expose open data without requiring authentication.</p>
+<ul><li>The dataset registry has a <code>public</code> flag.</li><li>The authoriser, even with no credential present, returns a permission context whose <code>accessible datasets</code> list includes all public-flagged datasets.</li><li>An unauthenticated request to a public dataset succeeds with the <code>public</code> role.</li><li>Public access participates in CDN caching; an <code>Authorization</code>-free request shares a single cache entry.</li></ul>
+<h1>Permission context header contract</h1>
+<p>The Lambda authoriser does not pass tokens to backends. Instead, it returns a context object in its response; API Gateway HTTP API's parameter mapping then attaches the context fields as <code>X-Auth-*</code> headers on the request forwarded over VPC Link to the internal ALB. Backends trust these headers because the ALB is internal-only and only the VPC Link's security group is permitted to reach it.</p>
+<table><tbody><tr><th>Header</th><th>Content</th></tr><tr><td><code>X-Auth-User-Id</code></td><td>A stable user identifier — the JWT subject claim, or <code>apikey:{owner_id}</code> for API-key auth.</td></tr><tr><td><code>X-Auth-User-Email</code></td><td>The user's email, when available.</td></tr><tr><td><code>X-Auth-User-Role</code></td><td>The effective role.</td></tr><tr><td><code>X-Auth-User-Scope</code></td><td>The scope ceiling.</td></tr><tr><td><code>X-Auth-User-Datasets</code></td><td>Comma-separated dataset identifiers the user may access.</td></tr><tr><td><code>X-Auth-User-Groups</code></td><td>Comma-separated platform-group identifiers the user belongs to.</td></tr><tr><td><code>X-Auth-User-Claims</code></td><td>Effective claims as a JSON-encoded object (used by backends that need claims for RLS).</td></tr></tbody></table>
+<p><strong>Contract guarantees</strong> (the basis for backend trust):</p>
+<ul><li>Headers are set by API Gateway from the authoriser's response. Clients cannot inject them — the gateway's parameter mapping is the only path through which <code>X-Auth-*</code> headers reach the ALB; any client-supplied <code>X-Auth-*</code> is ignored.</li><li>The internal ALB is in private subnets with a security group that allows ingress only from the VPC Link security group. Backends are not reachable from the public internet.</li><li>If the authoriser returns <code>isAuthorized: false</code>, API Gateway returns 401/403 directly and the ALB is never invoked.</li><li>If a backend receives a request <em>without</em> <code>X-Auth-User-Role</code>, it must treat the request as anonymous (fail-closed for writes; restrict reads to public datasets). This is the defence in depth for the rare case of a misconfigured route.</li></ul>
+<p>The API Gateway HTTP API authoriser result cache is <strong>disabled</strong> (TTL=0). Every request invokes the Lambda; per-Lambda-container LRU caching (described below) is what saves DynamoDB capacity. This is deliberate: the gateway's authoriser cache cannot be invalidated programmatically.</p>
+<h1>What happens inside the authoriser</h1>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart TB
+    REQ["Incoming request<br/>Authorization or X-Api-Key"] --> HASH["SHA-256 hash of credential<br/>(used as cache key)"]
+    HASH --> WARM{"Warm LRU cache hit?<br/>(60s TTL, allow only)"}
+    WARM -->|hit| CTX["Cached permission context"]
+    WARM -->|miss| VAL["Validate credential<br/>(JWT signature + expiry,<br/>or api-keys lookup)"]
+    VAL --> PAR["Parallel DynamoDB Query"]
+    PAR --> Q1[("Ceiling<br/>CEILING#idp_group")]
+    PAR --> Q2[("Memberships<br/>MEMBER#user")]
+    PAR --> Q3[("Group datasets<br/>GROUP#g → DATASET#*")]
+    PAR --> Q4[("Group claims<br/>GROUP#g META")]
+    PAR --> Q5[("RLS config<br/>DATASET#d → RLS#*")]
+    Q1 & Q2 & Q3 & Q4 & Q5 --> ASM["Assemble effective permission<br/>role = max(grants) ∩ ceiling<br/>datasets = union(group datasets) + public<br/>claims = JWT ∪ group claims"]
+    ASM --> CACHE["Populate caches<br/>(allow only)"]
+    CACHE --> CTX
+    CTX --> RESP["Return isAuthorized + context<br/>to API Gateway"]
+    RESP --> MAP["API Gateway parameter mapping<br/>→ X-Auth-User-Id<br/>→ X-Auth-User-Role<br/>→ X-Auth-User-Datasets<br/>→ X-Auth-User-Claims<br/>→ ..."]
+    MAP --> BACK["Forward to backend over VPC Link"]]]></ac:plain-text-body></ac:structured-macro>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the authoriser turns a credential into a permission decision and a set of headers, in parallel rather than serially, so a request without a warm cache still completes in tens of milliseconds.</p></ac:rich-text-body></ac:structured-macro>
+<h1>Caching</h1>
+<p>Two layers of caching inside the authoriser Lambda, with deliberate TTLs:</p>
+<table><tbody><tr><th>Layer</th><th>TTL</th><th>Behaviour on revocation</th></tr><tr><td>Authoriser result cache (warm Lambda container memory, LRU)</td><td>60 seconds</td><td>Allow decisions are cached; deny decisions are not. A revoked key fails on the next request once the cache entry expires.</td></tr><tr><td>Permission-data cache inside the authoriser (DynamoDB lookups for groups, datasets, claims)</td><td>300 seconds</td><td>Permission upgrades take up to five minutes to propagate.</td></tr></tbody></table>
+<p>Cache entries are keyed on a SHA-256 hash of the credential, never on the raw credential, so raw keys are not retained in process memory across requests.</p>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> a memory dump of a warm authoriser does not yield a usable key. The cache holds hashes and permission decisions, not the secrets that produced them.</p></ac:rich-text-body></ac:structured-macro>
+<p>When the Lambda container is recycled (scale-down, deployment, runtime restart), both caches disappear; the next request rebuilds them from DynamoDB.</p>
+<h1>Self-service surface</h1>
+<p>A small set of endpoints allows authenticated users to act on their own profile without admin intervention:</p>
+<table><tbody><tr><th>Endpoint</th><th>Action</th></tr><tr><td><code>GET /rest/auth/me</code></td><td>Return the caller's identity, role, scope, groups, and datasets.</td></tr><tr><td><code>POST /rest/auth/me/apikey</code></td><td>Issue a personal API key (subject to the caller's existing permissions).</td></tr><tr><td><code>DELETE /rest/auth/me/apikey/{hash}</code></td><td>Revoke a personal API key.</td></tr></tbody></table>
+<h1>Admin surface</h1>
+<p>The policy API offers the following resource classes; each supports the usual <code>list / get / create / update / delete</code> patterns appropriate to the resource:</p>
+<table><tbody><tr><th>Resource</th><th>Purpose</th></tr><tr><td>Ceilings</td><td>Map IdP group identifiers to <code>(role_ceiling, scope_ceiling)</code>.</td></tr><tr><td>Platform groups</td><td>Named groups with optional default claims.</td></tr><tr><td>Group memberships</td><td>User-to-group assignments with a role.</td></tr><tr><td>Group datasets</td><td>Which datasets each group accesses.</td></tr><tr><td>Projects</td><td>Named projects that bundle groups (optional organisational layer).</td></tr><tr><td>Datasets</td><td>Dataset registration: identifier, public flag, metadata, lineage.</td></tr><tr><td>Dataset RLS</td><td>Row-level security rules per dataset.</td></tr><tr><td>API keys</td><td>Issue and revoke keys for users or groups.</td></tr><tr><td>Invitations</td><td>Email-based invitations that resolve to memberships on first sign-in.</td></tr></tbody></table>
+<h1>Invitations and first sign-in</h1>
+<p>Inviting a user is decoupled from creating one. An admin creates an invitation specifying <code>(email, group, role)</code>. The invitation is stored as a <code>PK=INVITE#{email} SK=GROUP#{group_id}</code> item in the DynamoDB policies table.</p>
+<p>When the user first authenticates via Cognito (or the configured external IdP), a <strong>Cognito User Pool post-authentication Lambda trigger</strong> runs. The trigger queries DynamoDB for any pending invitations for that email, converts each into a <code>PK=MEMBER#{user_id} SK=GROUP#{group_id}</code> membership item, and deletes the invitation. Subsequent logins find no pending invitations and the membership persists.</p>
+<p>This design lets administrators provision access before the user exists in the IdP, and it survives IdP-side identity churn (a user re-created with the same email retains the platform memberships). If the IdP is an external OIDC provider rather than Cognito, the equivalent mechanism is a federated identity in Cognito with the post-auth trigger still attached, or — for direct external IdP use without Cognito — a small reconciliation Lambda invoked on first request that performs the same invitation lookup.</p>
+<h1>Permission propagation latency</h1>
+<p>Permission changes — adding a user to a group, granting a dataset, revoking a key — take effect on a request-by-request basis but are subject to:</p>
+<ol><li><strong>Authoriser warm-cache TTL</strong> (60 seconds for allow decisions).</li><li><strong>Internal permission data cache</strong> (300 seconds for groups/datasets/claims).</li></ol>
+<p>In the worst case, a user's <em>upgrade</em> (added to a group with more permissions) is visible within five minutes. A <em>downgrade</em> (removed from a group) is visible within the same window. A revoked API key fails on the next request once the cache entry for that key has expired (within 60 seconds).</p>
+<p>This is intentional: hitting the key-value store on every request would defeat the function-runtime scaling story. Sub-second revocation is achievable by tightening the TTLs at proportional cost in store reads.</p>
+<h1>What this design does well</h1>
+<ul><li>A single, small body of authorisation code controls every request. Backends are simple.</li><li>The IdP is the authority for <em>who</em> the user is and <em>which organisational roles</em> they may exercise. The platform is the authority for <em>which datasets</em> they may see and <em>with what claims</em>.</li><li>RLS via group claims allows partner-tenanted access to shared datasets without per-user IdP attributes.</li><li>API keys cover desktop GIS, scripts, and machine clients without requiring those clients to perform OIDC flows.</li><li>The authorisation model is IdP-agnostic; switching identity providers is a configuration change.</li></ul>
+<h1>What it leaves to the deployment</h1>
+<ul><li><strong>IdP federation</strong> is the responsibility of the chosen IdP's configuration; the platform consumes whatever the IdP issues.</li><li><strong>Multi-factor authentication</strong> is enforced at the IdP, not at the platform.</li><li><strong>Audit completeness</strong> — the gateway access log captures user, path, and status on every request; per-resource audit (which feature was modified, which dataset was accessed by column) is the responsibility of the relevant backend's event log. The editing pipeline writes such an event log; read backends do not.</li></ul>
+<p>See <ac:link><ri:page ri:content-title="11 — Editing Pipeline"/><ac:plain-text-link-body><![CDATA[11 Editing Pipeline]]></ac:plain-text-link-body></ac:link> for the edit event log.</p>

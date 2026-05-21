@@ -1,0 +1,61 @@
+<p>The OGC API Features endpoint is the standards-compliant way to access vector data as discrete features rather than as pre-rendered tiles. It is the canonical interface for desktop GIS users (QGIS, ArcGIS) and for any consumer that wants feature attributes and exact geometry rather than a tile.</p>
+<h1>What it offers</h1>
+<p>The OGC API Features specification defines a small, focused contract. The platform implements its core conformance classes:</p>
+<table><tbody><tr><th>Endpoint</th><th>Purpose</th></tr><tr><td><code>GET /features/v1</code></td><td>Landing page with links to conformance, collections, etc.</td></tr><tr><td><code>GET /features/v1/conformance</code></td><td>Declared conformance classes</td></tr><tr><td><code>GET /features/v1/collections</code></td><td>List of feature collections the caller may access</td></tr><tr><td><code>GET /features/v1/collections/{id}</code></td><td>Single collection description (extent, CRS, links)</td></tr><tr><td><code>GET /features/v1/collections/{id}/items</code></td><td>Query features with bbox, attribute filters, pagination</td></tr><tr><td><code>GET /features/v1/collections/{id}/items/{feature_id}</code></td><td>Retrieve a single feature by identifier</td></tr></tbody></table>
+<p>Responses are returned as GeoJSON by default; some implementations additionally support HTML for browser-friendly inspection and other formats (CSV, Parquet) by content negotiation.</p>
+<h1>Two valid implementation shapes</h1>
+<p>The OGC Features API can be built in two ways. Pick based on whether the deployment also needs the rich query layer.</p>
+<h2>A. Standalone — Lambda over GeoParquet on S3</h2>
+<p>When the only requirement is OGC compliance for feature access, the simplest implementation is a small <strong>AWS Lambda function</strong> that reads GeoParquet directly from S3 using <strong>DuckDB</strong> with the <code>httpfs</code> and <code>spatial</code> extensions. The Lambda runs behind the ALB (or directly attached to an API Gateway integration); cold-start latency is sub-second and warm-request latency is dominated by the S3 read.</p>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
+    C[Client] --> GW[API Gateway HTTP API] --> AZ[Lambda Authoriser]
+    GW --> FN["Features Lambda<br/>(DuckDB in-process)"]
+    FN --> DDB[(DynamoDB dataset registry)]
+    FN --> S3[(S3: source/ GeoParquet)]]]></ac:plain-text-body></ac:structured-macro>
+<p>This implementation is small enough to fit comfortably in a single Lambda. The whole flow is:</p>
+<ol><li>Receive the request; parse path and query parameters.</li><li>Read the user's accessible datasets from the permission headers.</li><li>Look up the collection in the dataset registry; reject with 404 if not present or not accessible.</li><li>Build a query against the appropriate <code>source/{dataset}/z=*/x=*/y=*/data.parquet</code> glob using the partition predicate derived from the bounding box.</li><li>Apply row-level security filters from the permission context.</li><li>Execute the query with <code>DISTINCT ON (id)</code> for deduplication.</li><li>Format the result as GeoJSON and return.</li></ol>
+<p>The handler is the only custom code. The analytical engine, the data format, and the object store handle the heavy lifting.</p>
+<p><strong>When to choose this shape:</strong></p>
+<ul><li>The deployment does not need spatial operations beyond bbox/attribute filtering and single-feature retrieval.</li><li>Lambda cold-start latency is acceptable (typically a fraction of a second once DuckDB and its extensions are loaded; warm requests are quick because the Lambda execution context reuses the loaded DuckDB instance).</li><li>Operational simplicity is valued over query richness.</li></ul>
+<blockquote><p><strong>Prior iteration.</strong> This <em>was</em> in fact the platform's original OGC Features implementation: a Fargate service running DuckDB and serving feature queries directly. When the GraphQL query layer was introduced, the Fargate service was refactored into a thin Lambda façade calling GraphQL (shape B below) so the spatial engine wasn't duplicated. The lesson: if a deployment doesn't need the query layer, the standalone Lambda shape is the right starting point — the Fargate-with-DuckDB shape was over-engineered for OGC-only use cases. Lambda has caught up: DuckDB initialises fast enough on warm Lambda containers to make Fargate's persistent-cache advantage marginal for OGC queries.</p></blockquote>
+<h2>B. Façade over the query layer</h2>
+<p>When the deployment includes the query layer (see <ac:link><ri:page ri:content-title="07 — Query Layer"/><ac:plain-text-link-body><![CDATA[07 Query Layer]]></ac:plain-text-link-body></ac:link>) — to support spatial operations, routing, joins, validation, and cross-dataset workflows — the OGC Features API can be a thin <strong>Lambda façade</strong> that translates standards-compliant HTTP requests into GraphQL calls to the query layer (a Fargate service) and translates responses back.</p>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
+    C[Client] --> GW[API Gateway HTTP API] --> AZ[Lambda Authoriser]
+    GW --> FN["Features façade<br/>(Lambda)"]
+    FN --> QL["Query layer<br/>(Fargate service)"]
+    QL --> S3[(S3: source/ GeoParquet)]
+    QL --> DDB[(DynamoDB dataset registry)]]]></ac:plain-text-body></ac:structured-macro>
+<p>The façade is responsible for:</p>
+<ul><li>Parsing OGC parameters (bbox, datetime, filter, limit, offset).</li><li>Mapping them to query-layer operations.</li><li>Formatting responses as GeoJSON, HTML, etc.</li><li>Honouring OGC conformance class requirements (pagination links, CRS handling).</li></ul>
+<p>The query layer handles the actual data access. This avoids duplicating the spatial-query engine in two places, and means improvements to the query layer (e.g. better predicate handling) automatically improve the OGC API.</p>
+<p><strong>When to choose this shape:</strong></p>
+<ul><li>The query layer already exists for other reasons.</li><li>Future OGC extensions (CQL2 filtering, complex queries) would benefit from a unified engine.</li></ul>
+<h2>Choosing between the two</h2>
+<p>If unsure, start with shape A. It is genuinely simple: a function handler, a JSON schema from the dataset registry, and a GeoParquet read. Add the query layer (shape B) when a real requirement for richer queries emerges; the OGC façade is then a routine refactor.</p>
+<h1>Query semantics</h1>
+<p>Regardless of implementation shape, the OGC API surface supports the same query semantics:</p>
+<table><tbody><tr><th>Parameter</th><th>Meaning</th></tr><tr><td><code>bbox</code></td><td><code>minx,miny,maxx,maxy</code> (in CRS84 by default). Filters to features intersecting the bbox.</td></tr><tr><td><code>bbox-crs</code></td><td>CRS for the bbox parameter (optional).</td></tr><tr><td><code>crs</code></td><td>Output CRS for geometries (optional).</td></tr><tr><td><code>datetime</code></td><td>RFC 3339 datetime or interval, for temporal filtering on a designated time column.</td></tr><tr><td><code>filter</code></td><td>CQL2-Text or CQL2-JSON filter expression (optional, conformance-class-dependent).</td></tr><tr><td><code>limit</code></td><td>Maximum items in response.</td></tr><tr><td><code>offset</code> (or <code>cursor</code>)</td><td>Pagination control.</td></tr></tbody></table>
+<p><strong>Bbox queries use partition pushdown.</strong> A request with a bbox is converted to the set of tile coordinates at the dataset's partition zoom that intersect the bbox. Only the GeoParquet files in those partitions are read. Predicate pushdown inside Parquet further reduces row-group reads.</p>
+<p><strong>Single-feature retrieval is a point lookup.</strong> The platform's deduplication strategy means every dataset has a designated <code>id_column</code>. The endpoint <code>GET /collections/{id}/items/{feature_id}</code> queries <code>WHERE {id_column} = {feature_id}</code> with <code>LIMIT 1</code>. The query touches whatever partitions hold the feature; for datasets with millions of features, this completes in milliseconds with proper Parquet statistics.</p>
+<p><strong>Pagination uses cursor semantics under the hood.</strong> Limit/offset is supported for compatibility, but offset-based pagination on large datasets is expensive. Implementations should prefer cursor-based pagination (using the last seen <code>id</code> as the cursor) for deep paging.</p>
+<h1>Row-level security</h1>
+<p>The OGC Features API enforces row-level security as specified in <ac:link><ri:page ri:content-title="03 — Authorisation"/><ac:plain-text-link-body><![CDATA[03 Authorisation]]></ac:plain-text-link-body></ac:link>. The authoriser's permission context includes:</p>
+<ul><li><code>X-Auth-User-Datasets</code> — datasets the user may access. Collections outside this list return 404 (not 403, to avoid leaking existence).</li><li><code>X-Auth-User-Claims</code> — JSON-encoded effective claims used to evaluate RLS filters.</li></ul>
+<p>For each query, the handler:</p>
+<ol><li>Fetches the dataset's RLS configuration from the registry.</li><li>Translates RLS rules into WHERE-clause additions using the user's claim values.</li><li>Appends them to the query.</li></ol>
+<p>Roles <code>platform_admin</code> and <code>data_manager</code> bypass RLS — they always see all rows.</p>
+<h1>Write operations</h1>
+<p>The OGC API Features specification includes a transactions extension. The platform's editing model differs deliberately:</p>
+<ul><li><strong>Single-feature writes</strong> (<code>POST</code>, <code>PUT</code>, <code>PATCH</code>, <code>DELETE</code> on <code>items</code>) are accepted by the editing API rather than the read API. The endpoints exist for OGC-conformance reasons but they translate into editing-API operations.</li><li><strong>Bulk writes</strong> go through the editing pipeline via presigned uploads, as described in <ac:link><ri:page ri:content-title="11 — Editing Pipeline"/><ac:plain-text-link-body><![CDATA[11 Editing Pipeline]]></ac:plain-text-link-body></ac:link>.</li><li><strong>Reviewed datasets</strong> (those with <code>review_required=true</code> in the registry) cannot be edited directly through the OGC transactions API; the editing-session flow must be used.</li></ul>
+<p>Some deployments may choose to omit the transactions class from the OGC API's declared conformance entirely, presenting a read-only OGC surface and routing all writes through the editing pipeline. This is the simpler and recommended stance.</p>
+<h1>Conformance classes</h1>
+<p>A minimal deployment declares conformance to:</p>
+<ul><li>Core</li><li>OAS30</li><li>HTML</li><li>GeoJSON</li></ul>
+<p>A deployment with the query-layer façade additionally declares:</p>
+<ul><li>CQL2 filtering (Text and JSON)</li><li>Sortby</li></ul>
+<p>A deployment that exposes single-feature writes additionally declares:</p>
+<ul><li>Create/Replace/Delete (but consider omitting this for reviewed datasets)</li></ul>
+<p>The exact conformance URIs are listed at <code>/conformance</code>. Clients (QGIS, ArcGIS, browser libraries) discover capabilities from this endpoint and adapt.</p>
+<h1>Limits</h1>
+<ul><li>The platform does not support transactions across multiple collections.</li><li>Complex CQL2 filters that exceed DuckDB's expressive range are rejected rather than silently truncated.</li><li>The query layer (when used as backend) has its own request-time limit; the OGC API surface inherits it.</li><li>Large response sizes are bounded by a configurable maximum (typically 10,000 features per page).</li></ul>
