@@ -22,6 +22,7 @@ The substance lives in `content/`:
 - `14_CLIENT_INTEGRATION.md` — QGIS, ArcGIS, web, programmatic
 - `15_MAP_CLIENT.md` — first-party React + MapLibre web client: catalogue, editing, review, GraphiQL, live pipeline link
 - `16_DESIGN_DECISIONS.md` — 30+ decisions with rationale and prior-iteration lessons
+- `17_FURTHER_DIRECTIONS.md` — sketched extensions worth exploring (semantic discovery, geocoding, point clouds, 3D, CV, multi-agent, field capture, reports, subscriptions, change detection, live data)
 
 ## Running locally
 

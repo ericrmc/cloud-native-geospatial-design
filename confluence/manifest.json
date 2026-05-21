@@ -63,6 +63,10 @@
     "source": "16_DESIGN_DECISIONS.md",
     "title": "15 — Design Decisions"
   },
+  "17_further_directions.xml": {
+    "source": "17_FURTHER_DIRECTIONS.md",
+    "title": "17 — Further Directions"
+  },
   "index.xml": {
     "source": "index.md",
     "title": "Cloud-Native Spatial Platform — Design Documentation"

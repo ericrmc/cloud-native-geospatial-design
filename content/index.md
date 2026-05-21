@@ -58,6 +58,7 @@ The platform is positioned as **state-of-the-art serverless spatial computing**:
 | 14 | [Client Integration](14_CLIENT_INTEGRATION.md) | QGIS, ArcGIS, web maps, programmatic clients |
 | 15 | [Map Client](15_MAP_CLIENT.md) | First-party React + MapLibre web app: catalogue, editing, review, GraphiQL, live pipeline link |
 | 16 | [Design Decisions](16_DESIGN_DECISIONS.md) | Standalone record of pivotal choices and trade-offs |
+| 17 | [Further Directions](17_FURTHER_DIRECTIONS.md) | Eleven sketched extensions — semantic discovery, geocoding, point clouds, 3D, computer vision, multi-agent orchestration, field capture, reports, subscriptions, change detection, live data |
 
 ## AWS as the reference platform
 
