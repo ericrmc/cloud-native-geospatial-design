@@ -94,9 +94,13 @@ To pass an API key with ArcGIS requests, configure the portal item's request hea
 
 ArcGIS Pro consumes WMTS via Add Data → Add Layer From URL with the WMTS GetCapabilities URL. Authentication is configured per the Pro version's documentation.
 
-## Web map clients
+## First-party web map client
 
-For map libraries (MapLibre, Leaflet, OpenLayers):
+The platform ships a bundled web application — see [15 Map Client](15_MAP_CLIENT.md) — built on React and MapLibre, with embedded GraphiQL, schema-driven editing, reviewed-editing approvals, live job tracking, and dataset history browsing. It consumes every public surface and is the recommended starting point for users who want a working spatial workspace without writing one. The rest of this document covers other client types — desktop GIS variants, generic web maps, and programmatic clients — that integrate against the same APIs.
+
+## Generic web map clients
+
+For map libraries (MapLibre, Leaflet, OpenLayers) used outside the first-party client:
 
 | Source type | URL pattern | Auth |
 |---|---|---|

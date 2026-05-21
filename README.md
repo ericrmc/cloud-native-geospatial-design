@@ -20,7 +20,8 @@ The substance lives in `content/`:
 - `12_DEPLOYMENT.md` — environments, scaling modes, AWS specifics
 - `13_OPERATIONS.md` — monitoring, runbooks, DR
 - `14_CLIENT_INTEGRATION.md` — QGIS, ArcGIS, web, programmatic
-- `15_DESIGN_DECISIONS.md` — 30+ decisions with rationale and prior-iteration lessons
+- `15_MAP_CLIENT.md` — first-party React + MapLibre web client: catalogue, editing, review, GraphiQL, live pipeline link
+- `16_DESIGN_DECISIONS.md` — 30+ decisions with rationale and prior-iteration lessons
 
 ## Running locally
 

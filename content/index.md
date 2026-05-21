@@ -29,13 +29,14 @@ The platform is positioned as **state-of-the-art serverless spatial computing**:
 
 | If you are… | Start with | Then |
 |---|---|---|
-| An executive needing the shape | [01 Principles](01_PRINCIPLES.md), [02 Architecture](02_ARCHITECTURE.md) | [15 Design Decisions](15_DESIGN_DECISIONS.md) |
-| An architect planning a build | [01 Principles](01_PRINCIPLES.md) → [02 Architecture](02_ARCHITECTURE.md) → [04 Data Layout](04_DATA_LAYOUT.md) → [03 Authorisation](03_AUTHORISATION.md) | [15 Design Decisions](15_DESIGN_DECISIONS.md), [12 Deployment](12_DEPLOYMENT.md) |
+| An executive needing the shape | [01 Principles](01_PRINCIPLES.md), [02 Architecture](02_ARCHITECTURE.md) | [16 Design Decisions](16_DESIGN_DECISIONS.md) |
+| An architect planning a build | [01 Principles](01_PRINCIPLES.md) → [02 Architecture](02_ARCHITECTURE.md) → [04 Data Layout](04_DATA_LAYOUT.md) → [03 Authorisation](03_AUTHORISATION.md) | [16 Design Decisions](16_DESIGN_DECISIONS.md), [12 Deployment](12_DEPLOYMENT.md) |
 | An implementer of the read path | [04 Data Layout](04_DATA_LAYOUT.md), [05 Vector Tiles](05_VECTOR_TILES.md), [06 OGC Features API](06_OGC_FEATURES_API.md) | [08 Raster](08_RASTER_SERVICES.md), [09 Routing](09_ROUTING.md), [10 Discovery](10_DISCOVERY.md) |
 | An implementer of the query layer | [07 Query Layer](07_QUERY_LAYER.md) | [04 Data Layout](04_DATA_LAYOUT.md), [09 Routing](09_ROUTING.md) |
 | An implementer of editing | [11 Editing Pipeline](11_EDITING_PIPELINE.md) | [04 Data Layout](04_DATA_LAYOUT.md), [03 Authorisation](03_AUTHORISATION.md) |
 | An operator | [13 Operations](13_OPERATIONS.md), [12 Deployment](12_DEPLOYMENT.md) | [11 Editing Pipeline](11_EDITING_PIPELINE.md) |
 | A client integrator | [14 Client Integration](14_CLIENT_INTEGRATION.md) | [03 Authorisation](03_AUTHORISATION.md) |
+| A front-end developer of the map client | [15 Map Client](15_MAP_CLIENT.md) | [03 Authorisation](03_AUTHORISATION.md), [11 Editing Pipeline](11_EDITING_PIPELINE.md) |
 
 ## Document catalogue
 
@@ -55,7 +56,8 @@ The platform is positioned as **state-of-the-art serverless spatial computing**:
 | 12 | [Deployment](12_DEPLOYMENT.md) | Environments, service groups, scaling modes |
 | 13 | [Operations](13_OPERATIONS.md) | Monitoring, alarms, troubleshooting, DR |
 | 14 | [Client Integration](14_CLIENT_INTEGRATION.md) | QGIS, ArcGIS, web maps, programmatic clients |
-| 15 | [Design Decisions](15_DESIGN_DECISIONS.md) | Standalone record of pivotal choices and trade-offs |
+| 15 | [Map Client](15_MAP_CLIENT.md) | First-party React + MapLibre web app: catalogue, editing, review, GraphiQL, live pipeline link |
+| 16 | [Design Decisions](16_DESIGN_DECISIONS.md) | Standalone record of pivotal choices and trade-offs |
 
 ## AWS as the reference platform
 
@@ -79,6 +81,6 @@ A brief survey of the closest equivalents on Google Cloud and Azure is given in 
 
 ## Status of this design
 
-This is a *direction* document, not a record of a proven implementation. The original prototype was not production-reviewed and is not being handed over. Anyone implementing against this set should treat it as a well-considered starting point: the decisions in [15 Design Decisions](15_DESIGN_DECISIONS.md) are the load-bearing ones, but every component admits substitution as long as the contracts in [02 Architecture](02_ARCHITECTURE.md), [03 Authorisation](03_AUTHORISATION.md), and [04 Data Layout](04_DATA_LAYOUT.md) are preserved.
+This is a *direction* document, not a record of a proven implementation. The original prototype was not production-reviewed and is not being handed over. Anyone implementing against this set should treat it as a well-considered starting point: the decisions in [15 Design Decisions](16_DESIGN_DECISIONS.md) are the load-bearing ones, but every component admits substitution as long as the contracts in [02 Architecture](02_ARCHITECTURE.md), [03 Authorisation](03_AUTHORISATION.md), and [04 Data Layout](04_DATA_LAYOUT.md) are preserved.
 
 Several decisions documented here are informed by **prior iterations** that were tried and replaced during the prototype's life. Where a previous shape failed or proved over-engineered, the relevant document explains the lesson learned. These are not abstract preferences; they are scars.

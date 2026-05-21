@@ -1,0 +1,118 @@
+<p>The platform ships a first-party web map application that consumes every public surface — vector tiles, raster tiles, the OGC Features API, the GraphQL query layer, the STAC catalogue, the editing API, and the job and review APIs — and demonstrates how they compose into a working spatial workspace. It is the reference client. Anyone building a different front-end against the same platform can read its component shape as a worked example.</p>
+<ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> one web app that lets a user browse the catalogue, render layers, draw and edit features, submit edits to the reviewed pipeline, watch the pipeline produce its draft tiles in near-real-time, and approve or reject sessions — all while logged in via the same auth gate the rest of the platform uses.</p></ac:rich-text-body></ac:structured-macro>
+<h1>Technology stack</h1>
+<ul><li><strong>React 19</strong> with TypeScript and the React Compiler runtime for ergonomic reactivity.</li><li><strong>Vite</strong> for the dev server and the production build (single-page app).</li><li><strong>MapLibre GL JS</strong> for vector and raster tile rendering. WebGL-based, supports the same Mapbox style spec the platform emits, renders PMTiles via the standard MVT pipeline.</li><li><strong>GraphiQL</strong> (<code>@graphiql/react</code>) embedded as a panel for interactive GraphQL query exploration against the query layer.</li><li><strong>React JSON Schema Form (RJSF)</strong> for schema-driven attribute editing — datasets provide their JSON Schema via the dataset registry, and RJSF renders an appropriate form per feature.</li><li><strong>Amazon Cognito Identity JS</strong> for OIDC sign-in against the platform's Cognito User Pool. API key access is supported in parallel for machine-friendly scenarios.</li></ul>
+<p>The client is a static single-page application. It is built to a <code>dist/</code> directory and deployed to S3 under a <code>map-client/</code> prefix, served by the same CloudFront distribution that fronts the API. No server-side rendering, no Node runtime in production.</p>
+<h1>What a user can do</h1>
+<p>A user signed in to the client can:</p>
+<ol><li><strong>Browse the dataset catalogue.</strong> A table of contents lists available datasets grouped by type (vector, raster, table). Dataset search filters by name and metadata. Each dataset entry shows status (active, deprecated, processing) so users see catalogue state, not just titles.</li><li><strong>Add layers to the map.</strong> Vector datasets render as MVT layers from the vector tile server; raster datasets render via the raster tile server or WMTS proxy depending on dataset type. The client respects the user's authorisation — only datasets the user has access to appear in the catalogue.</li><li><strong>Inspect features.</strong> Clicking a feature opens a popup with attribute values and links to the feature's history (SCD2 queries via the query layer).</li><li><strong>Scrub time.</strong> For datasets with a TIME dimension, a slider control switches the active mosaic and re-fetches tiles.</li><li><strong>Measure.</strong> A measurement tool computes lengths and areas client-side from drawn geometries.</li><li><strong>Draw and edit.</strong> Drawing tools create or modify geometries directly on the map. Attribute editing is driven by the dataset's schema — RJSF generates a form from the schema and validates inputs client-side before they are submitted.</li><li><strong>Accumulate edits into a session.</strong> Edits do not submit immediately. An <code>EditSessionContext</code> collects <code>PendingEdit[]</code> in client state; the user reviews their pending changes and chooses when to submit.</li><li><strong>Submit a session and watch the pipeline.</strong> Submission posts the accumulated edits to the editing API, which creates a session and starts the workflow. The client receives the job identifiers and displays a job-status toast that polls the job API until completion.</li><li><strong>See draft layers as they generate.</strong> For datasets with reviewed editing enabled, the generation task produces delta and difference PMTiles in the <code>drafts/{dataset}/{session}/</code> prefix. The client renders these as overlay layers as soon as they are available — a live link into the editing pipeline that gives reviewers something visual to act on before promotion.</li><li><strong>Review and approve.</strong> The Review Panel selects an edit session and renders the delta and diff PMTiles in one of three modes (see below). The reviewer approves or rejects via the editing API; the underlying state machine progresses to promotion or rejection.</li><li><strong>Inspect dataset history.</strong> A dataset history view queries the SCD2 history through the query layer and shows previous versions of features, the time each version was valid for, and which job made the change.</li><li><strong>Compose GraphQL queries interactively.</strong> A GraphiQL panel is embedded so advanced users can build queries against the query layer with full schema introspection and authentication carried across.</li></ol>
+<h1>Review modes</h1>
+<p>The Review Panel renders draft tiles in one of three explicit modes (type literally <code>'operations' | 'diff' | 'preview'</code>):</p>
+<table><tbody><tr><th>Mode</th><th>What it shows</th><th>When it helps</th></tr><tr><td><code>operations</code></td><td>The delta PMTiles only — every edited feature, colour-coded by edit operation (add / update / delete) and validation status.</td><td>Quick scan of "what is the editor changing", with operation type immediately visible.</td></tr><tr><td><code>diff</code></td><td>The diff PMTiles — geometric ST_Difference between session and live data, classified by diff type (geometry added, geometry removed, attributes only, etc.).</td><td>Precise before-and-after visualisation, especially for polygon datasets where boundary changes are subtle.</td></tr><tr><td><code>preview</code></td><td>The live data composited with the delta — what the dataset will look like after promotion.</td><td>The "final read" before approving.</td></tr></tbody></table>
+<p>Switching modes re-styles the map without re-fetching tiles — both PMTiles files are loaded once when the review session opens.</p>
+<h1>Component architecture</h1>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
+    subgraph React["React app (static SPA on S3 + CloudFront)"]
+        subgraph Contexts["Contexts (state)"]
+            AUTH[AuthContext<br/>Cognito sign-in]
+            APIK[ApiKeyContext<br/>API key fallback]
+            EDIT[EditSessionContext<br/>PendingEdit accumulator]
+            LAYER[LayerContext<br/>active layers]
+            SPATIAL[SpatialParamsContext<br/>bbox + viewport]
+        end
+        subgraph UI["UI components"]
+            MAP[MapView<br/>MapLibre instance]
+            TOC[TableOfContents<br/>+ DatasetSearch]
+            DRAW[DrawTools<br/>+ DrawControls]
+            FORM[SchemaForm<br/>RJSF attribute editor]
+            REV[ReviewPanel<br/>delta / diff / preview]
+            HIST[DatasetHistory<br/>SCD2 viewer]
+            GIQL[GraphiQLPanel<br/>query exploration]
+            TIME[TimeSlider]
+            JOB[JobToast<br/>pipeline status]
+        end
+        subgraph Hooks["Hooks (data + map glue)"]
+            HVEC[useVectorTileLayer]
+            HRAS[useRasterLayer]
+            HGEO[useGeoJsonLayer]
+            HREV[useReviewLayers]
+            HDYN[useDynamicLayers]
+            HSCH[useDatasetSchema]
+            HPERM[useEditPermission]
+            HSYNC[useLayerSync]
+        end
+    end
+
+    subgraph Platform["Platform surfaces"]
+        COG[Cognito]
+        APIGW[API Gateway HTTP API + Lambda authoriser]
+        STAC[STAC API]
+        FEAT[OGC Features API]
+        QL[Query layer / GraphQL]
+        EAPI[Editing API]
+        JAPI[Job API]
+        TILE[Vector tile server]
+        RTILE[Raster tile server]
+        WMTS[WMTS proxy]
+    end
+
+    AUTH -- OIDC --> COG
+    UI -- "X-Auth via JWT or X-Api-Key" --> APIGW
+    APIGW --> STAC & FEAT & QL & EAPI & JAPI & TILE & RTILE & WMTS
+
+    TOC --> STAC
+    HVEC --> TILE
+    HRAS --> RTILE
+    HREV --> TILE
+    HSCH --> FEAT
+    FORM --> EAPI
+    DRAW --> EDIT
+    EDIT --> EAPI
+    JOB --> JAPI
+    REV --> EAPI
+    HIST --> QL
+    GIQL --> QL]]></ac:plain-text-body></ac:structured-macro>
+<h1>State and context model</h1>
+<p>Five React contexts carry the app's state. Each is a single source of truth for one concern:</p>
+<ul><li><strong><code>AuthContext</code></strong> — Cognito sign-in state, ID and refresh tokens, current user profile, sign-out. Drives the <code>fetchWithAuth</code> helper that signs every outbound request with the user's JWT.</li><li><strong><code>ApiKeyContext</code></strong> — API key fallback for non-interactive sessions and tests. Either auth path produces the same trusted <code>X-Auth-*</code> headers at the platform's gate.</li><li><strong><code>EditSessionContext</code></strong> — accumulates <code>PendingEdit[]</code> from the drawing and form components, exposes <code>submitAll()</code> that posts the batch to the editing API and returns the resulting job identifiers. Holds the active server-side session record (<code>ServerSession</code>) once one exists, with its status (<code>draft</code>, <code>uploading</code>, <code>submitted</code>, <code>validating</code>, <code>reviewing</code>, <code>approved</code>, <code>promoting</code>, <code>promoted</code>, <code>failed</code>, <code>rejected</code>, <code>cancelled</code>).</li><li><strong><code>LayerContext</code></strong> — registry of layers currently on the map, their visibility, paint properties, and source URLs. The map view subscribes to it; component changes flow through <code>useLayerSync</code>.</li><li><strong><code>SpatialParamsContext</code></strong> — current bbox, zoom, centre. Drives data fetches that need a spatial scope (catalogue search by extent, history queries within a bbox).</li></ul>
+<p>Per-component hooks compose these contexts. <code>useEditPermission(datasetId)</code> reads <code>AuthContext</code> and the dataset registry to determine whether the active user may edit the given dataset; <code>useDatasetSchema(datasetId)</code> fetches the JSON Schema once and caches it; <code>useReviewLayers(sessionId, mode)</code> builds the MapLibre layer specifications for the chosen review mode and applies them to the map instance.</p>
+<h1>Authentication flow</h1>
+<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
+    autonumber
+    participant U as User
+    participant APP as Map client (React SPA)
+    participant COG as Cognito User Pool
+    participant GW as API Gateway HTTP API
+    participant AZ as Lambda Authoriser
+    participant BE as Platform backends
+
+    U->>APP: Open https://platform.example.com/map-client/
+    APP->>U: Show LoginPanel
+    U->>APP: Enter email + password
+    APP->>COG: USER_PASSWORD_AUTH (amazon-cognito-identity-js)
+    COG-->>APP: ID token + refresh token
+    APP->>APP: AuthContext stores tokens, schedules refresh
+    Note over U,BE: From this point on every backend call goes through the gate
+    APP->>GW: GET /stac/collections (Authorization: Bearer <JWT>)
+    GW->>AZ: invoke authoriser
+    AZ-->>GW: isAuthorized + X-Auth-* context
+    GW->>BE: forward with X-Auth-* headers
+    BE-->>APP: filtered to user's datasets
+    APP->>U: Render catalogue]]></ac:plain-text-body></ac:structured-macro>
+<p>For headless or scripted use, the same client can run with an API key supplied via <code>ApiKeyContext</code> instead of the Cognito flow. The <code>fetchWithAuth</code> helper transparently picks the available credential.</p>
+<h1>Live link to the editing pipeline</h1>
+<p>The "live" feel of the client comes from two cooperating mechanisms.</p>
+<p><strong>Job status polling.</strong> When <code>submitAll()</code> succeeds, the editing API returns job identifiers. <code>JobToast</code> subscribes via the job API and polls until each job reaches a terminal state. The polling cadence is short (low single-digit seconds) so users see state transitions as they happen: <code>pending → validating → generating → promoting → complete</code> or the failure path. On completion the toast offers a link to the dataset and (for reviewed sessions) the Review Panel.</p>
+<p><strong>Draft tile rendering during generation.</strong> For datasets with reviewed editing, the generation task writes delta and diff PMTiles to <code>drafts/{dataset}/{session}/...</code> as soon as it has them. The client requests these tile URLs against the vector tile server; once the objects exist, MapLibre renders them automatically on the next viewport change. The reviewer can see what is being produced <em>before</em> the workflow has even reached the review state — useful for catching obvious mistakes early.</p>
+<p>The pattern is fully asynchronous: no WebSocket, no SSE. The platform's S3 + ETag-driven refresh and the client's polling carry the load.</p>
+<h1>Permission-aware UI</h1>
+<p>The client never exposes operations a user cannot perform.</p>
+<ul><li>The catalogue only lists datasets in <code>X-Auth-User-Datasets</code>.</li><li>Edit tools are hidden when <code>useEditPermission(datasetId)</code> returns false.</li><li>The Review Panel is hidden when the user's role is below <code>publisher</code>.</li><li>The GraphiQL panel is available to any authenticated user, but operations the user cannot authorise simply fail at the gate — the client does not pre-filter the schema.</li><li>Anonymous (no-credential) load is supported for read-only browsing of public datasets; the client adjusts its UI accordingly.</li></ul>
+<h1>Deployment</h1>
+<p>The map client builds to a <code>dist/</code> directory and is uploaded to S3 under a <code>map-client/</code> prefix. The platform's CloudFront distribution has a behaviour mapping <code>/map-client/*</code> to the bucket via Origin Access Control. The static cache policy serves assets with a one-hour default TTL; the SPA entry point is configured to bypass caching for the HTML shell.</p>
+<p>A small static viewer (<code>/viewer/*</code> in S3) accompanies the map client for cases where a self-contained, dependency-free HTML map is preferred — typically for embedding into reports or sharing a URL with no application setup. The viewer covers a subset of the map client's features (display, no editing).</p>
+<h1>Limits and open work</h1>
+<ul><li><strong>The review-panel workflow exists</strong> (<code>ReviewPanel</code>, <code>useReviewLayers</code>, <code>draftDeltaTileUrl</code>, <code>draftDiffTileUrl</code>) and the three modes are wired. Like the rest of the reviewed-editing path, it has not been load-tested with real reviewers and large sessions. Treat the visual fidelity of the diff classification as designed, not proven.</li><li><strong>The GraphiQL embed is for advanced users.</strong> It exposes the full query layer surface, including the undertested spatial-analysis resolvers covered in <ac:link><ri:page ri:content-title="10 — Discovery"/><ac:plain-text-link-body><![CDATA[10 Discovery]]></ac:plain-text-link-body></ac:link>. Casual users should stay with the curated UI components.</li><li><strong>Offline behaviour is undefined.</strong> The client assumes connectivity; a future build should consider a service worker for resilient tile caching.</li><li><strong>There is no multi-user editing coordination in the UI.</strong> If two users open the same dataset and edit, both batches submit; per-dataset concurrency on the platform side queues them. The client does not show that a queue is forming.</li><li><strong>Mobile is not a primary target.</strong> Layout, drawing precision, and touch gestures are functional but not refined.</li></ul>
+<h1>What this serves well</h1>
+<ul><li>Demonstrating the platform's full surface to a stakeholder or new user.</li><li>A bundled answer to "how do users actually interact with this?" without forcing every consumer to build their own client.</li><li>A reference implementation of the patterns a third-party client would also need: credential-aware fetches, permission-aware UI, schema-driven editing, batched edits via sessions, live job tracking, delta/diff review rendering.</li></ul>
+<p>A team writing a different web client — perhaps tailored to a narrow workflow — can pick up these patterns without copying the code. The contracts are what matter; the React app is one valid realisation.</p>

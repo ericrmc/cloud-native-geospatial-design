@@ -417,6 +417,10 @@ Operational concerns of the pipeline:
 | **Retry** | A failed session can be retried by uploading a corrected payload; the new job is a separate workflow execution. |
 | **Cleanup** | Lifecycle policies clean up `landing/` (immediate), `pmtiles/staging/` (on promotion), `drafts/` (after 90 days). |
 
+## A note on the first-party map client
+
+The platform ships a bundled web map client (see [15 Map Client](15_MAP_CLIENT.md)) that consumes this pipeline end-to-end: it accumulates edits client-side, submits them via the editing API, polls the job API for status, and — for reviewed datasets — renders the delta and difference PMTiles as overlay layers from the `drafts/` prefix as soon as the generation task produces them. The Review Panel exposes the three rendering modes (operations / diff / preview) directly. This is the worked example of how a UI consumes a reviewed editing pipeline; a different client targeting the same APIs can reuse the patterns.
+
 ## What this does well
 
 - **Decouples request handling from pipeline work.** Editors do not wait for tile generation.

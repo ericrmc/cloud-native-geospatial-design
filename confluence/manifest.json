@@ -55,8 +55,12 @@
     "source": "14_CLIENT_INTEGRATION.md",
     "title": "14 — Client Integration"
   },
-  "15_design_decisions.xml": {
-    "source": "15_DESIGN_DECISIONS.md",
+  "15_map_client.xml": {
+    "source": "15_MAP_CLIENT.md",
+    "title": "15 — Map Client (Web Application)"
+  },
+  "16_design_decisions.xml": {
+    "source": "16_DESIGN_DECISIONS.md",
     "title": "15 — Design Decisions"
   },
   "index.xml": {

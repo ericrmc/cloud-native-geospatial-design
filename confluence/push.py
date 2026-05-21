@@ -62,7 +62,8 @@ PAGE_ORDER = [
     "12_deployment.xml",
     "13_operations.xml",
     "14_client_integration.xml",
-    "15_design_decisions.xml",
+    "15_map_client.xml",
+    "16_design_decisions.xml",
 ]
 
 

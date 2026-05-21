@@ -222,4 +222,4 @@ Custom components are deliberately small because the design principle of stable 
 
 - The data layer is the most consequential design choice — go to [04 Data Layout](04_DATA_LAYOUT.md) next.
 - The authorisation model determines every request's behaviour — [03 Authorisation](03_AUTHORISATION.md).
-- The rationale for each technology pick is in [15 Design Decisions](15_DESIGN_DECISIONS.md).
+- The rationale for each technology pick is in [15 Design Decisions](16_DESIGN_DECISIONS.md).
