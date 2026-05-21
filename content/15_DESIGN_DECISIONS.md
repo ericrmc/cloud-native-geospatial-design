@@ -29,7 +29,7 @@ These are the lessons that informed the decisions below. Where a decision exists
 
 > *In plain terms:* an idle deployment pays for storage and almost nothing else. The cost shape follows traffic, not the calendar.
 
-**Prior iteration.** The platform originally ran on **Aurora PostgreSQL Serverless v2 with PostGIS and pgSTAC**, deployed as an RDS stack with RDS Proxy. The minimum capacity floor (0.5 ACU ≈ $43/month) and the operational weight of patching, backup, and Data API integration made scale-to-zero impossible. The whole database stack was deleted in favour of S3-native formats. The platform has not needed a database for spatial data since.
+**Prior iteration.** The platform originally ran on **Aurora PostgreSQL Serverless v2 with PostGIS and pgSTAC**, deployed as an RDS stack with RDS Proxy. The minimum capacity floor (0.5 ACU ≈ \$43/month) and the operational weight of patching, backup, and Data API integration made scale-to-zero impossible. The whole database stack was deleted in favour of S3-native formats. The platform has not needed a database for spatial data since.
 
 **Trade-off.** No live SQL queries against spatial data. Updates are batch-oriented through the editing pipeline, not transactional INSERTs.
 

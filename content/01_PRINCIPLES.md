@@ -17,14 +17,14 @@ The cloud-native formats used:
 
 ## 2. Scale-to-zero is a first-class concern
 
-The platform is expected to sit idle for extended periods between demos, dev cycles, and partner work. Every serving component must be able to run at zero capacity and start on demand. A platform with a $400/month minimum is not the same product as a platform with a $5/month minimum, even if their warm performance is identical.
+The platform is expected to sit idle for extended periods between demos, dev cycles, and partner work. Every serving component must be able to run at zero capacity and start on demand. A platform with a \$400/month minimum is not the same product as a platform with a \$5/month minimum, even if their warm performance is identical.
 
 This implies:
 - No always-on databases for spatial data.
 - **Fargate services** that can run at desired-count 0 and scale up on demand via ECS Service Auto Scaling.
 - **AWS Lambda** for lightweight handlers (auth, discovery, write coordination) where pay-per-invocation matches usage shape.
 - **CloudFront** edge caching that absorbs steady-state traffic so back-end services can stay cold.
-- **No NAT Gateways** where avoidable — VPC endpoints to S3 and DynamoDB instead, eliminating ~$130/month per environment of always-on cost.
+- **No NAT Gateways** where avoidable — VPC endpoints to S3 and DynamoDB instead, eliminating ~\$130/month per environment of always-on cost.
 
 Three explicit scaling modes are offered — *off*, *minimal*, *performance* — and the entire infrastructure is parameterised by them via AWS CDK context. See [12 Deployment](12_DEPLOYMENT.md).
 

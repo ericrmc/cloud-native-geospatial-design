@@ -114,7 +114,7 @@ The internal ALB is **not internet-facing** — it sits in private subnets with 
 
 > **Prior iteration.** The ALB was once **internet-facing**, in public subnets. All traffic was *supposed* to go through API Gateway for auth, but the ALB was technically reachable directly, bypassing the Lambda authoriser. This was closed in two steps: first restricting the ALB security group to CloudFront IPs only, then moving the ALB to private subnets with VPC Link as the only path. Anyone implementing this design should make the ALB internal-only from day one.
 
-Backends access DynamoDB and S3 through cloud-native **VPC endpoints** (Gateway endpoints for S3 and DynamoDB; Interface endpoints for ECR, CloudWatch Logs, and Secrets Manager where used). No outbound internet egress is required for the read or write paths; this allows the deployment to omit NAT Gateways entirely, eliminating their ~$65/month-per-AZ baseline cost.
+Backends access DynamoDB and S3 through cloud-native **VPC endpoints** (Gateway endpoints for S3 and DynamoDB; Interface endpoints for ECR, CloudWatch Logs, and Secrets Manager where used). No outbound internet egress is required for the read or write paths; this allows the deployment to omit NAT Gateways entirely, eliminating their ~\$65/month-per-AZ baseline cost.
 
 > *In plain terms:* every service the platform talks to lives either inside the VPC or behind a private endpoint, so the cluster doesn't need a paid bridge to the public internet at all.
 
