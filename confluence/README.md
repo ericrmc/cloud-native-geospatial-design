@@ -83,7 +83,17 @@ The two target spaces for the current handover:
 | Planning Victoria — CNG | <https://planningvic.atlassian.net/wiki/spaces/CNG/overview> |
 | Public Transport Victoria — CNG | <https://publictransportvic.atlassian.net/wiki/spaces/CNG/overview> |
 
-Push to each in turn — same `convert.py` output, two `push.py` invocations:
+The recommended path is the wrapper script `push-all.sh`:
+
+```sh
+cd ~/Development/cloud-native-geospatial-design/confluence
+./push-all.sh              # dry run — shows what would happen for both spaces
+./push-all.sh --apply      # real push to every configured space
+```
+
+It runs the pre-flight check (env files present, CONF_EMAIL placeholder replaced, CONF_TOKEN non-empty), regenerates the pages once, then pushes to each space inside its own subshell so env vars from one cannot leak into the next. Targets are listed at the top of the script — add more spaces by appending to the `TARGETS` array.
+
+If you prefer to do it manually:
 
 ```sh
 # Planning Victoria
