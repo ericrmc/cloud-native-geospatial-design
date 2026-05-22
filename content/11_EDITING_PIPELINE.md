@@ -197,56 +197,23 @@ A check must return rows of the form `(id, message)`. Each row is a violation; a
 
 ### Validation outcome
 
-**Where validated data lands.** When validation passes, the same task writes the validated features to the authoritative `source/{dataset}/z={z}/x={x}/y={y}/data.parquet` partitions before the workflow advances to generation. There is no intermediate source-staging prefix. This is a deliberate trade-off — fewer S3 hops, simpler IAM — but it has two consequences worth naming:
+**Where validated data lands.** When validation passes, the same task writes the validated features to the authoritative `source/{dataset}/z={z}/x={x}/y={y}/data.parquet` partitions before the workflow advances to generation. There is no intermediate source-staging prefix — fewer S3 hops, simpler IAM. Validation failure is a clean no-change (the `apply_*` paths only run after the result is valid), but for reviewed datasets this means OGC Features and the query layer reflect proposed changes as soon as validation passes, while the PMTiles swap waits for reviewer approval. The review gate ends up on rendered tiles, not on the underlying source.
 
-- **Reviewed datasets.** For datasets with `review_required=true`, OGC Features and the query layer reflect the proposed changes as soon as validation passes, even though the PMTiles swap (and therefore the map-client experience) waits for reviewer approval. The review gate is on **rendered tiles**, not on the underlying source.
-- **Validation failure.** If validation fails, no source partitions are touched — `apply_*` paths only run after the result is marked valid. The failure mode is "no change," not "partial change."
+> *Noticed in review.* The pipeline was built around the simpler shape and the inconsistency only surfaced when the corpus was re-read end-to-end. Three forward fixes are sketched below; a vendor rebuild should pick one explicitly rather than inherit the current behaviour by default.
 
-> *Inline note:* the audit picked this up as Finding 1. It is recorded here rather than hidden — the choice is in the code, and a vendor rebuild should make the design tension explicit before deciding whether to keep the simpler shape. Two forward fixes worth considering are below.
+### Forward fix A — `source-staging/` prefix
 
-### Forward fix A — `source-staging/` prefix (recommended for an incremental rebuild)
+Validation writes to `source-staging/{dataset}/{job_id}/...` instead of directly to `source/`. Promotion gains a `CopyObject` fan-out step before the PMTiles swap. The unapproved-data window shrinks from minutes/hours to the duration of the copy step; no reader-side change.
 
-Add one prefix and move the `apply_*` step from validation to promotion:
+### Forward fix B — manifest-pointer
 
-```
-source-staging/{dataset}/{job_id}/z={z}/x={x}/y={y}/data.parquet   ← validation writes here
-source/{dataset}/z={z}/x={x}/y={y}/data.parquet                    ← authoritative, only promotion writes
-```
+Partitions live under `source/{dataset}/v{N}/...` and a `current_manifest_version` in DynamoDB names the live version. Promotion is a single conditional `UpdateItem` flipping the pointer — atomic across all partitions, with native time-travel and rollback. Read backends become manifest-aware, which is the real cost.
 
-The change is small:
+### Forward fix C — Apache Iceberg (or equivalent open table format)
 
-1. **Validation** writes the new partition set under `source-staging/{dataset}/{job_id}/...` and records the staging key set in the job record. No live partitions are touched.
-2. **Generation** still reads from `source/`; the reviewer sees delta and diff PMTiles built against current live data, which is the right reference for "what is changing."
-3. **Promotion** gains a step before the PMTiles swap: walk the staging tree and `CopyObject` each staging key to its live `source/` key, then `DeleteObject` for any deletions the validation task recorded. The PMTiles swap stays as today. The Lambda is still idempotent — re-running it finds the live keys already updated and is a no-op.
-4. A lifecycle rule expires `source-staging/` after seven days as a safety net, mirroring `landing/`.
+Iceberg solves the same problem as B but as a standard with engine ecosystem support (Trino, Athena, Spark, DuckDB read). Right answer in principle; not the right answer today because cross-partition writes with `DISTINCT ON (id)` dedup (D3) is anti-Iceberg, geometry support in Iceberg v3 is still maturing, and a catalog (Glue, Polaris) reintroduces the always-on dependency D1 removed. Re-evaluate in 12–24 months when DuckDB's Iceberg extension matches the current GeoParquet read path on spatial predicate pushdown.
 
-Properties:
-
-- The visibility window for unapproved data on OGC and the query layer shrinks from "validation → generation → review → approval" (minutes to hours) to "the duration of promotion's CopyObject fan-out" (seconds for typical edits, longer for `replace` operations). Not atomic across partitions, but bounded.
-- Reviewed datasets get a real review gate on the underlying source, not just on rendered tiles.
-- One extra `CopyObject` per affected partition is the marginal cost — negligible compared to the generation task itself.
-- No reader-side change. Backends still glob `source/{dataset}/z=*/x=*/y=*/data.parquet`.
-
-### Forward fix B — manifest-pointer (Iceberg-style, principled rebuild)
-
-If the platform is being rebuilt from scratch and atomic multi-partition promotion is a hard requirement, the cleaner shape is a manifest pointer:
-
-```
-source/{dataset}/v{N}/z={z}/x={x}/y={y}/data.parquet               ← content-addressed by version
-metadata/manifests/{dataset}/v{N}.json                             ← lists the partition files for v{N}
-DynamoDB datasets table: { dataset_id, current_manifest_version: N }
-```
-
-Promotion becomes one DynamoDB conditional update flipping `current_manifest_version` from N to N+1. Readers `GetItem` the dataset first, resolve to a manifest, then read the partition paths listed there.
-
-Properties:
-
-- **Atomic across partitions.** The visibility window is zero — a single DynamoDB pointer flip.
-- **Native time-travel and rollback.** Older manifests *are* the history; the SCD2 layer in `history/` becomes a derived view rather than a separate write path. Rolling back a bad promotion is a one-line update to a prior version.
-- **Cost.** Every read pays one cached `GetItem` to resolve the manifest, plus the existing S3 reads. Storage grows with version count, bounded by a lifecycle policy that compacts old manifests and their unreferenced partition files.
-- **Lift.** Every read backend (Features API, query layer, history vacuum, generation task) needs manifest-aware path resolution. Substantial — this is a redesign of the read path, not a tweak.
-
-This is the shape that mature table formats (Apache Iceberg, Delta Lake) adopt for the same reason. If a future build wants strict review semantics, ACID-ish guarantees, or time-travel as a first-class feature, B is where it lands. A is enough for everything the prototype actually demonstrates.
+A is the pragmatic move for an incremental rebuild; B is the principled rewrite; C is where the industry is heading once the geo and catalog gaps close.
 
 The validation task writes a results summary to `drafts/{dataset}/{session}/checks/results.json` and emits a summary to the session record:
 

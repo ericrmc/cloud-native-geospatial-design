@@ -36,7 +36,7 @@ Each prefix has clear producer/consumer ownership — most have a single produce
 | `mosaics/` | External processes or admin scripts | Raster tile server, WMTS proxy |
 | `pmtiles/` | Promotion function (atomic copy from staging) | Vector tile server |
 | `pmtiles/staging/` | Generation task | Promotion function |
-| `source/` | Validation task (writes after checks pass; no staging prefix in this prototype — see Finding 1 note in [11 Editing Pipeline](11_EDITING_PIPELINE.md) for the recommended `source-staging/` fix) | Query layer, OGC Features API, generation task |
+| `source/` | Validation task (writes after checks pass; no staging prefix in this prototype — see the note on validation/promotion timing in [11 Editing Pipeline](11_EDITING_PIPELINE.md) for the recommended `source-staging/` fix) | Query layer, OGC Features API, generation task |
 | `drafts/` | Validation and generation tasks | Reviewer (via vector tile server), editing API |
 | `landing/` | Clients (via presigned upload) | Workflow engine (triggered by storage event) |
 | `history/` | Promotion function (writes deltas); history vacuum (compacts) | Query layer (point-in-time queries) |
