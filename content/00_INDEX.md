@@ -1,6 +1,6 @@
 # Document index and reading paths
 
-This page is the navigational entry point to the design corpus. For the purpose and framing of the work itself, start at the [introduction](index.md).
+This page is the navigational entry point to the design documentation. For the purpose and framing of the work itself, start at the [introduction](index.md).
 
 A complete, implementation-independent description of a serverless geospatial platform for hosting and serving vector data, raster data, and reviewed dataset editing, behind a single authorisation layer.
 
@@ -44,7 +44,7 @@ The platform is positioned as **state-of-the-art serverless spatial computing**:
 
 | # | Document | Subject |
 |---|---|---|
-| — | [Introduction](index.md) | Purpose, framing, the original brief, and how to read the corpus |
+| — | [Introduction](index.md) | Purpose, framing, the original brief, and how to read the rest |
 | 01 | [Principles](01_PRINCIPLES.md) | Design philosophy and non-goals |
 | 02 | [Architecture](02_ARCHITECTURE.md) | System shape, components, request flow |
 | 03 | [Authorisation](03_AUTHORISATION.md) | Identity, roles, ceilings, groups, claims, RLS, API keys |
@@ -62,7 +62,7 @@ The platform is positioned as **state-of-the-art serverless spatial computing**:
 | 15 | [Map Client](15_MAP_CLIENT.md) | First-party React + MapLibre web app: catalogue, editing, review, GraphiQL, live pipeline link |
 | 16 | [Design Decisions](16_DESIGN_DECISIONS.md) | Standalone record of pivotal choices and trade-offs |
 | 17 | [Further Directions](17_FURTHER_DIRECTIONS.md) | Eleven sketched extensions — semantic discovery, geocoding, point clouds, 3D, computer vision, multi-agent orchestration, field capture, reports, subscriptions, change detection, live data |
-| 18 | [Glossary and References](18_GLOSSARY_AND_REFERENCES.md) | Reference index — every term, format, service, standard, library, and peer OGC stack named in the corpus, with canonical URLs |
+| 18 | [Glossary and References](18_GLOSSARY_AND_REFERENCES.md) | Reference index — every term, format, service, standard, library, and peer OGC stack named across the documentation, with canonical URLs |
 
 ## AWS as the reference platform
 
@@ -98,6 +98,6 @@ This design is a snapshot of considered work, not eternal truth. The research an
 - **February 2026** — the platform's public git history begins. First working PMTiles and raster stack lands; Martin → go-pmtiles switch follows; database stack deleted in favour of S3-native formats; DynamoDB-backed authoriser introduced.
 - **March 2026** — the most active month. GraphQL query layer added; OGC Features API refactored from Fargate-with-DuckDB into a Lambda façade; edit sessions, per-dataset concurrency, reviewed editing with delta/diff PMTiles, SCD2 history, and SQL-based bulk editing all land. Internal-only ALB and VPC Link migration completed.
 - **April 2026** — final tweaks and consolidation.
-- **May 2026** — this design corpus assembled.
+- **May 2026** — this design documentation assembled.
 
-Seven months is enough time for the AWS, OGC, and open-source landscape to move. Several technology claims here may already have been overtaken — Aurora Serverless v2 added true scale-to-zero late in this window (see the callout under [D1 in 16 Design Decisions](16_DESIGN_DECISIONS.md)); Bedrock AgentCore matured rapidly; OpenSearch Serverless pricing shifted; mermaid macro names in Confluence Cloud changed providers. Where the corpus has caught up, it says so. Where it has not, treat every concrete tech claim as **true when written, not true forever**. Re-check the canonical sources in [18 Glossary and References](18_GLOSSARY_AND_REFERENCES.md) before committing to a build path. The [closing note in 17 Further Directions](17_FURTHER_DIRECTIONS.md#a-note-on-dates) bookends this point.
+Seven months is enough time for the AWS, OGC, and open-source landscape to move. Several technology claims here may already have been overtaken — Aurora Serverless v2 added true scale-to-zero late in this window (see the callout under [D1 in 16 Design Decisions](16_DESIGN_DECISIONS.md)); Bedrock AgentCore matured rapidly; OpenSearch Serverless pricing shifted; mermaid macro names in Confluence Cloud changed providers. Where the documentation has caught up, it says so. Where it has not, treat every concrete tech claim as **true when written, not true forever**. Re-check the canonical sources in [18 Glossary and References](18_GLOSSARY_AND_REFERENCES.md) before committing to a build path. The [closing note in 17 Further Directions](17_FURTHER_DIRECTIONS.md#a-note-on-dates) bookends this point.

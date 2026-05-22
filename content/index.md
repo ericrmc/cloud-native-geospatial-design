@@ -4,13 +4,13 @@
 
 Some time ago I was asked what could be done to reduce cost pressure, ease the maintenance burden carried by spatial teams, address the data silos that grow up across project-specific platforms, improve access security, and make spatial data delivery faster and more reliable.
 
-This corpus is my answer.
+This work is my answer.
 
 The work is a cloud-native spatial platform reference architecture. In simpler terms, it is a complete design for a modern platform that can store, manage, secure, serve, and edit spatial data in a more consistent way across an organisation.
 
 It addresses the original asks together because, in practice, they are closely connected. Cost, maintenance, security, performance, and data fragmentation are not separate problems. They are different symptoms of the same underlying platform challenge.
 
-The artefact is a nineteen-chapter design corpus. It is written to stand on its own. The prototype that informed it is not being handed over as a production system. It was valuable as a way to test ideas, but it was not production-reviewed and should not be treated as a deployable asset. What is offered is the design, the reasoning behind it, the options that were tested and rejected, and the lessons learned along the way.
+The artefact is a nineteen-chapter set of design documents. It is written to stand on its own. The prototype that informed it is not being handed over as a production system. It was valuable as a way to test ideas, but it was not production-reviewed and should not be treated as a deployable asset. What is offered is the design, the reasoning behind it, the options that were tested and rejected, and the lessons learned along the way.
 
 ## How the work was developed
 
@@ -22,15 +22,15 @@ That approach was deliberate. There have been many opportunities for incremental
 
 This work is offered as that position. It is not a demand that anyone immediately change direction. It is a stake in the ground that future investment, procurement, and architecture decisions can be measured against.
 
-## What the corpus contains
+## What the documentation contains
 
-The corpus describes a platform that uses cloud storage as the primary foundation for spatial data, rather than relying on heavy database infrastructure for every read request. That choice is central to the cost and maintenance story.
+The design describes a platform that uses cloud storage as the primary foundation for spatial data, rather than relying on heavy database infrastructure for every read request. That choice is central to the cost and maintenance story.
 
 It also describes a single access-control layer across the platform, so that data can be reached securely and consistently rather than being split across many project-specific arrangements.
 
 The design supports standard spatial interfaces, so that future systems, tools, and vendors can connect to it without anyone being locked into one narrow delivery pattern. It includes a model for reviewed editing, change history, data repair, and publication workflows. It also includes a worked example of a web mapping client to show how the platform could be used in practice.
 
-Importantly, the corpus records the decisions behind the design. It documents earlier options that were tried and moved away from, including heavier database-led patterns, alternative serving components, public-facing infrastructure choices, and platform options that did not fit the work's needs. These are not abstract preferences. They are lessons from the work.
+Importantly, the documentation records the decisions behind the design. It documents earlier options that were tried and moved away from, including heavier database-led patterns, alternative serving components, public-facing infrastructure choices, and platform options that did not fit the work's needs. These are not abstract preferences. They are lessons from the work.
 
 It also includes a comparison of peer platforms and tools, so that future teams can see what was considered, what was rejected, and why. Some future possibilities are sketched as well, including better search, assisted data discovery, and more natural ways for users to ask questions of spatial data. Those ideas are clearly marked as future directions, not delivered components.
 
@@ -40,7 +40,7 @@ This is not a complete solution ready to implement without further work. It cann
 
 Some parts of the design are strong and well tested through the prototype. Other parts are designed but not yet tested in a production setting. Some sections are deliberately directional.
 
-The corpus is clear about those boundaries. That honesty is important. Anyone using the work should be able to see where the firm ground ends and where further validation would be needed.
+This work is clear about those boundaries. That honesty is important. Anyone using the work should be able to see where the firm ground ends and where further validation would be needed.
 
 ## The economic case
 
