@@ -199,10 +199,54 @@ A check must return rows of the form `(id, message)`. Each row is a violation; a
 
 **Where validated data lands.** When validation passes, the same task writes the validated features to the authoritative `source/{dataset}/z={z}/x={x}/y={y}/data.parquet` partitions before the workflow advances to generation. There is no intermediate source-staging prefix. This is a deliberate trade-off — fewer S3 hops, simpler IAM — but it has two consequences worth naming:
 
-- **Reviewed datasets.** For datasets with `review_required=true`, OGC Features and the query layer reflect the proposed changes as soon as validation passes, even though the PMTiles swap (and therefore the map-client experience) waits for reviewer approval. The review gate is on **rendered tiles**, not on the underlying source. A future iteration could add a `source-staging/` prefix or a dataset-level pointer that promotion atomically updates; the current pipeline does not.
+- **Reviewed datasets.** For datasets with `review_required=true`, OGC Features and the query layer reflect the proposed changes as soon as validation passes, even though the PMTiles swap (and therefore the map-client experience) waits for reviewer approval. The review gate is on **rendered tiles**, not on the underlying source.
 - **Validation failure.** If validation fails, no source partitions are touched — `apply_*` paths only run after the result is marked valid. The failure mode is "no change," not "partial change."
 
-> *Inline note:* the audit picked this up as Finding 1. It is recorded here rather than hidden — the choice is in the code and a vendor rebuild should make the design tension explicit before deciding whether to keep the simpler shape.
+> *Inline note:* the audit picked this up as Finding 1. It is recorded here rather than hidden — the choice is in the code, and a vendor rebuild should make the design tension explicit before deciding whether to keep the simpler shape. Two forward fixes worth considering are below.
+
+### Forward fix A — `source-staging/` prefix (recommended for an incremental rebuild)
+
+Add one prefix and move the `apply_*` step from validation to promotion:
+
+```
+source-staging/{dataset}/{job_id}/z={z}/x={x}/y={y}/data.parquet   ← validation writes here
+source/{dataset}/z={z}/x={x}/y={y}/data.parquet                    ← authoritative, only promotion writes
+```
+
+The change is small:
+
+1. **Validation** writes the new partition set under `source-staging/{dataset}/{job_id}/...` and records the staging key set in the job record. No live partitions are touched.
+2. **Generation** still reads from `source/`; the reviewer sees delta and diff PMTiles built against current live data, which is the right reference for "what is changing."
+3. **Promotion** gains a step before the PMTiles swap: walk the staging tree and `CopyObject` each staging key to its live `source/` key, then `DeleteObject` for any deletions the validation task recorded. The PMTiles swap stays as today. The Lambda is still idempotent — re-running it finds the live keys already updated and is a no-op.
+4. A lifecycle rule expires `source-staging/` after seven days as a safety net, mirroring `landing/`.
+
+Properties:
+
+- The visibility window for unapproved data on OGC and the query layer shrinks from "validation → generation → review → approval" (minutes to hours) to "the duration of promotion's CopyObject fan-out" (seconds for typical edits, longer for `replace` operations). Not atomic across partitions, but bounded.
+- Reviewed datasets get a real review gate on the underlying source, not just on rendered tiles.
+- One extra `CopyObject` per affected partition is the marginal cost — negligible compared to the generation task itself.
+- No reader-side change. Backends still glob `source/{dataset}/z=*/x=*/y=*/data.parquet`.
+
+### Forward fix B — manifest-pointer (Iceberg-style, principled rebuild)
+
+If the platform is being rebuilt from scratch and atomic multi-partition promotion is a hard requirement, the cleaner shape is a manifest pointer:
+
+```
+source/{dataset}/v{N}/z={z}/x={x}/y={y}/data.parquet               ← content-addressed by version
+metadata/manifests/{dataset}/v{N}.json                             ← lists the partition files for v{N}
+DynamoDB datasets table: { dataset_id, current_manifest_version: N }
+```
+
+Promotion becomes one DynamoDB conditional update flipping `current_manifest_version` from N to N+1. Readers `GetItem` the dataset first, resolve to a manifest, then read the partition paths listed there.
+
+Properties:
+
+- **Atomic across partitions.** The visibility window is zero — a single DynamoDB pointer flip.
+- **Native time-travel and rollback.** Older manifests *are* the history; the SCD2 layer in `history/` becomes a derived view rather than a separate write path. Rolling back a bad promotion is a one-line update to a prior version.
+- **Cost.** Every read pays one cached `GetItem` to resolve the manifest, plus the existing S3 reads. Storage grows with version count, bounded by a lifecycle policy that compacts old manifests and their unreferenced partition files.
+- **Lift.** Every read backend (Features API, query layer, history vacuum, generation task) needs manifest-aware path resolution. Substantial — this is a redesign of the read path, not a tweak.
+
+This is the shape that mature table formats (Apache Iceberg, Delta Lake) adopt for the same reason. If a future build wants strict review semantics, ACID-ish guarantees, or time-travel as a first-class feature, B is where it lands. A is enough for everything the prototype actually demonstrates.
 
 The validation task writes a results summary to `drafts/{dataset}/{session}/checks/results.json` and emits a summary to the session record:
 
