@@ -40,6 +40,7 @@ import hashlib
 import json
 import mimetypes
 import os
+import re
 import secrets
 import sys
 import urllib.error
@@ -168,6 +169,7 @@ class Confluence:
                 return json.loads(payload) if payload else {}
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
+            e.response_body = err_body  # type: ignore[attr-defined]
             print(
                 f"  HTTP {e.code} on {method} {path}\n  Response: {err_body[:1000]}",
                 file=sys.stderr,
@@ -331,6 +333,18 @@ class Confluence:
         version_number: int,
         parent_id: str | None,
     ) -> dict:
+        """Update a page. On a 409 version conflict, parse the server's
+        current version out of the error message and retry once with
+        `current + 1`. Local state version can drift behind server when:
+
+        - An attachment delete+recreate bumped the page version side-effectfully.
+        - A previous push errored after the PUT but before persisting state.
+        - The page was edited interactively in the Confluence UI.
+        - Another push to the same space ran in parallel.
+
+        Returns the response object; callers should record
+        `result["version"]["number"]` as the new state version.
+        """
         payload: dict = {
             "id": page_id,
             "type": "page",
@@ -340,7 +354,22 @@ class Confluence:
         }
         if parent_id:
             payload["ancestors"] = [{"id": parent_id}]
-        return self._request("PUT", f"/wiki/rest/api/content/{page_id}", payload)
+        try:
+            return self._request("PUT", f"/wiki/rest/api/content/{page_id}", payload)
+        except urllib.error.HTTPError as e:
+            if e.code != 409:
+                raise
+            body = getattr(e, "response_body", "") or ""
+            m = re.search(r"[Cc]urrent version is[:\s]+(\d+)", body)
+            if not m:
+                raise
+            current = int(m.group(1))
+            new_version = current + 1
+            print(
+                f"  Page version conflict: tried {version_number}, server is at {current}. Retrying with {new_version}."
+            )
+            payload["version"]["number"] = new_version
+            return self._request("PUT", f"/wiki/rest/api/content/{page_id}", payload)
 
 
 def load_state(path: Path) -> dict:
@@ -406,14 +435,22 @@ def main() -> int:
         if existing:
             new_version = int(existing.get("version", 1)) + 1
             print(f"  Updating: {title}  (page id {existing['id']}, version -> {new_version})")
-            client.update_page(
+            result = client.update_page(
                 existing["id"], title, body, new_version, parent_id
             )
             # Update returns the same id; keep the real one for attachment ops.
             page_id = existing["id"]
+            # Record the server's reported version rather than our local guess,
+            # so a 409-retry path (or any other server-side bump) doesn't leave
+            # the state file lagging behind the server on the next run.
+            server_version = new_version
+            if isinstance(result, dict):
+                v = result.get("version", {}).get("number")
+                if isinstance(v, int):
+                    server_version = v
             state[filename] = {
                 "id": page_id,
-                "version": new_version,
+                "version": server_version,
                 "title": title,
                 "attachments": prior_attachments,
             }
