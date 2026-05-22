@@ -16,9 +16,10 @@ The platform implements **STAC API 1.0.0** for the core conformance classes that
 | `GET /stac/conformance` | Declared conformance classes |
 | `GET /stac/collections` | List of collections the caller may access |
 | `GET /stac/collections/{id}` | Single collection description |
-| `GET /stac/collections/{id}/items` | Items in the collection (if applicable) |
-| `GET /stac/collections/{id}/items/{item_id}` | Single item |
-| `GET /stac/search` | Cross-collection search by bbox, datetime, properties |
+| `GET /stac/collections/{id}/items` | Returns an empty FeatureCollection in this prototype — see note below |
+| `GET /stac/search` | Collection-level search by bbox, datetime, collection id |
+
+**What an "item" is in this platform.** The prototype's STAC model is **collection-centric**: one STAC collection per dataset, and no separate STAC item store. `/collections/{id}/items` is implemented as a stub that returns an empty `FeatureCollection`; `/search` returns matching *collections* (not items) so that bbox/datetime narrowing still works at the catalogue level. Per-feature access is delegated to the OGC Features API for vector datasets and the Coverages / raster-tile endpoints for raster datasets. A future iteration could expose one synthetic item per COG (with `assets` pointing at each acquisition) and back item search by an indexed store — the shape is reachable without changing collections, since collections already carry the dataset's bbox, time interval, and asset references.
 
 Each collection in the STAC response corresponds to a dataset in the registry. The mapping is straightforward:
 
@@ -92,10 +93,10 @@ The STAC `search` endpoint accepts:
 | `bbox` | Filter collections to those overlapping the bbox |
 | `datetime` | Filter to those within the time range |
 | `collections` | Limit search to specific collections |
-| `ids` | Retrieve specific items by ID |
+| `ids` | Restrict to specific collection ids (no per-item index in this prototype) |
 | `limit` | Page size |
 
-Search is paginated with cursor semantics. The implementation does not require an index beyond the dataset registry; for datasets with millions of *items* (typically raster archives), a STAC items service backed by a search-optimised store is appropriate. The platform's reference implementation supports collection-level search; per-item search is delegated to the relevant backend (the Features API for vector items, the Coverages API for raster).
+Search is paginated with cursor semantics and operates **at the collection level only** in this prototype — `/search` returns matching collections rather than items. The implementation does not require an index beyond the dataset registry; for raster archives with millions of acquisitions, a STAC items service backed by a search-optimised store (e.g. pgSTAC or OpenSearch) is the natural extension. Per-feature access for vector datasets is delegated to the OGC Features API; per-COG access for raster datasets is delegated to the Coverages and raster tile endpoints.
 
 ## Journey: from STAC discovery to first query
 
@@ -151,7 +152,7 @@ A spatial analyst joins an organisation. They have an API key or a JWT, a web ma
    }
    ```
 
-   The REST surface is a façade over the same GraphQL layer that the direct query uses; the OGC API translates its parameters into a `searchFeatures` call and formats the response as GeoJSON. Either entry point gives the same partition-pruned, RLS-aware, deduplicated read. These query shapes — select, bbox, single feature by id, dataset metadata lookup — are the validated baseline.
+   In deployments that run the query layer (the prototype's shape), the REST surface is a façade over the same GraphQL layer that the direct query uses: the OGC API translates its parameters into a `searchFeatures` call and formats the response as GeoJSON. In an OGC-only deployment that omits the query layer, the standalone Lambda-over-GeoParquet shape ([06 OGC Features API](06_OGC_FEATURES_API.md)) backs the same REST contract directly against DuckDB; the response is identical to the client. Either entry point gives the same partition-pruned, RLS-aware, deduplicated read. These query shapes — select, bbox, single feature by id, dataset metadata lookup — are the validated baseline.
 
 5. **Compose spatial operations — designed but largely untested.** When the analyst's question requires more than filter-and-project — *parcels within a 15-minute drive of these fire stations*, or *the dissolved boundary of all the addresses in a council* — they reach for GraphQL operations that the REST surface does not expose:
 
@@ -174,7 +175,7 @@ A spatial analyst joins an organisation. They have an API key or a JWT, a web ma
 
    The query layer computes the isochrone via the routing engine, uses the resulting geometry to filter parcels via DuckDB spatial, and returns both results in a single response. Buffer, union, dissolve, intersect, simplify, centroid, convex hull, distance, point-in-polygon, and the routing operations are all designed as **thin GraphQL resolvers over DuckDB spatial functions and the routing engine**. The underlying functions are well-tested in DuckDB and Valhalla; the resolver wrappers — argument coercion, error handling, batch limits, the cross-engine composition — have not been exercised against real workloads. They are expected to work. They have not been proven to.
 
-6. **Save a query result as a new dataset.** Designed-but-untested: if the analyst wants the composed result to be reusable, the `saveQueryResult` mutation writes it as a new GeoParquet dataset under `source/`, registers it in DynamoDB, and pushes it through the editing pipeline so tiles are generated. Within a minute or two the saved query becomes a first-class dataset, discoverable through STAC. This stitches the query layer into the editing pipeline; both halves work in isolation, but the seam has not been load-tested.
+6. **Save a query result as a new dataset.** Designed-but-undertested: the prototype's `saveQueryResult` mutation writes the composed result to a separate `derived/{name}/data.parquet` prefix (not `source/`) and registers it as a *derived* dataset with lineage metadata pointing at the source query. It does **not** flow through the editing pipeline — no validation, no PMTiles generation, no review gate — and the resolver does not enforce a role check at the schema layer in the prototype. The intent was always that this would graduate into the editing pipeline (write to a session, route through validation and generation, gate on `editor` or `data_manager`), but that work was not completed. Treat the current behaviour as a prototype hook, not a finished surface; a hardened build should route saves through the editing pipeline and require an explicit role.
 
 ```mermaid
 sequenceDiagram
@@ -218,8 +219,8 @@ sequenceDiagram
     end
     opt Save result for reuse
         U->>QL: mutation saveQueryResult(...)
-        QL->>S3: Write source/{new_dataset}/...
-        QL->>DDB: Register dataset, trigger pipeline
+        QL->>S3: Write derived/{new_dataset}/data.parquet (no pipeline)
+        QL->>DDB: Register derived dataset with lineage
     end
 ```
 
@@ -315,7 +316,7 @@ A `roads-2024` vector dataset has been replaced by `roads-2026`. The new dataset
    { "metadata": { "archived": true, "archived_at": "2027-10-01" } }
    ```
 
-   The Policy API applies an **S3 Lifecycle transition** to the dataset's prefixes (`source/roads-2024/`, `pmtiles/roads-2024.pmtiles`, `history/roads-2024/`) moving the objects to **S3 Glacier Deep Archive**. The DynamoDB registry entry remains as a tombstone — the dataset's metadata, lineage, schema, and event log are still queryable by admins for audit. The 410 Gone response continues to be returned for data requests.
+   In the prototype, archival is a **metadata flag only**: the Policy API sets `metadata.archived=true` and `history_archive_to_glacier=true` on the dataset record, and the 410 Gone response begins to be returned for data requests. The actual S3 Lifecycle transition to **S3 Glacier Deep Archive** is *not* applied in the same call — there is no lifecycle rule today that watches for the flag, and there is no immediate `CopyObject` to Glacier. The intent is that a separate scheduled task (or an operator-managed lifecycle rule keyed on object tags) drives the transition asynchronously. A hardened build should either add a tag-keyed S3 Lifecycle rule that the archive call sets, or run an EventBridge-scheduled tagger that walks archived datasets and applies tags. The DynamoDB registry entry remains as a tombstone either way — the dataset's metadata, lineage, schema, and event log stay queryable by admins for audit.
 
    Restoring from Glacier Deep Archive takes 12–48 hours and incurs retrieval cost. The expectation is that archived datasets are restored only for compliance review, not for resumed serving.
 

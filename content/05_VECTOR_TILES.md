@@ -99,8 +99,12 @@ GeoParquet (source/) → FlatGeobuf intermediate → Tippecanoe → PMTiles → 
 
 Two modes:
 
-- **Full generation** — for `replace` operations or first-time generation. Reads all partitions, builds the entire PMTiles archive.
-- **Incremental generation** — for `add`, `update`, `patch`, and `delete` operations. Reads only the affected partitions, builds a small PMTiles, and `tile-join`s it into the current live archive. Faster for large datasets with small edits.
+- **Full generation** — for `replace` operations, first-time generation, and any case where the affected-partition set is unknown or the current live PMTiles archive does not yet exist. Reads all partitions, builds the entire PMTiles archive.
+- **Incremental generation** — for `add` operations where the affected-partition set is known and the current live PMTiles exists. The generation task reads only the affected source partitions, exports them to FlatGeobuf, runs Tippecanoe to produce a small patch PMTiles, and `tile-join`s it into the current archive to produce a new staging PMTiles. Faster for large datasets with small edits.
+
+**What `tile-join` can and cannot do.** `tile-join` is a merge over per-tile vector layers; it overlays the patch tiles onto the base tiles. This composes cleanly for **adds** — new features land in their tiles without disturbing what was already there. For **updates** and **deletes**, naively running `tile-join` would leave the stale encoding of the old feature in every tile that previously held it: the patch contains the new encoding (or nothing for deletes) but cannot remove the old bytes. The prototype handles this by widening the affected-partition set on the source-data side (the validation task tracks `extra_tiles` when an update changes a feature's geometry across partitions) so the patch covers every tile that needs to be rewritten — but lower-zoom tiles synthesised from multiple features may still carry stale generalisations.
+
+**Practical contract today.** Use full regeneration for `replace`, for deletes, and for any update that may cross partition boundaries or affect low-zoom synthesis — that is what the current code path falls back to. Use incremental generation for additive edits to large datasets where rebuilding the whole archive is the dominant cost. A future iteration could narrow this further by identifying the exact z/x/y tile set affected, regenerating just those tiles, and emitting a replacement PMTiles in place of a merge. That work is not in the prototype.
 
 ## Limits
 

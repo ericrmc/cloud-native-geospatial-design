@@ -27,7 +27,7 @@ spatial-data-bucket/
 └── map-client/                 Map client application bundle
 ```
 
-Each prefix has a single purpose and a defined producer/consumer relationship.
+Each prefix has clear producer/consumer ownership — most have a single producer and a small set of consumers; a few (`drafts/`) are written by more than one task and read by more than one client.
 
 | Prefix | Producer | Consumer |
 |---|---|---|
@@ -36,7 +36,7 @@ Each prefix has a single purpose and a defined producer/consumer relationship.
 | `mosaics/` | External processes or admin scripts | Raster tile server, WMTS proxy |
 | `pmtiles/` | Promotion function (atomic copy from staging) | Vector tile server |
 | `pmtiles/staging/` | Generation task | Promotion function |
-| `source/` | Validation task | Query layer, OGC Features API |
+| `source/` | Validation task (writes after checks pass; no staging prefix) | Query layer, OGC Features API, generation task |
 | `drafts/` | Validation and generation tasks | Reviewer (via vector tile server), editing API |
 | `landing/` | Clients (via presigned upload) | Workflow engine (triggered by storage event) |
 | `history/` | Promotion function (writes deltas); history vacuum (compacts) | Query layer (point-in-time queries) |
@@ -64,7 +64,7 @@ flowchart LR
     DRAFT --> VTS
 ```
 
-Each prefix is the only thing some component writes to and the only thing some other component reads from. That one-producer-one-consumer property is what keeps lifecycle rules, IAM, and reasoning about staleness manageable.
+Lifecycle rules, IAM, and reasoning about staleness all become tractable because each prefix has a known set of writers and a known set of readers, even where that set is larger than one — and because authoritative artefacts (`source/`, `pmtiles/`, `history/`) each have exactly one writer.
 
 ### Vector data: GeoParquet with Hive-style spatial partitioning
 
@@ -134,14 +134,14 @@ Per-row history is stored under `history/{dataset}/` as flat (non-partitioned) P
 | `_job_id` | The pipeline job that produced this version. |
 
 **Write pattern** (per promotion):
-- New row versions and inserts are written to `{job_id}_delta.parquet`.
-- For updates and deletes, lightweight closeout files (`{job_id}_closeout.parquet` containing `id`, `_valid_to`, `_is_current=false`) record that the prior version is no longer current.
+- New row versions and inserts are written to `{job_id}_delta.parquet` with the full row.
+- For updates and deletes, lightweight closeout files (`{job_id}_closeout.parquet` containing `id`, `_valid_to`, `_is_current=false`, `_closeout=true`) record that the prior version is no longer current. The prior version's full row stays in its original delta or in `_initial.parquet`; the closeout is the marker that supersedes it.
 
 **Initial snapshot**: when history is first enabled on a large dataset, a single `_initial.parquet` is written with the current dataset state. The history vacuum (see below) compacts deltas but never rewrites the initial snapshot.
 
-**Read pattern**: queries glob over `history/{dataset}/**/*.parquet`. Predicate pushdown on `_valid_from`/`_valid_to` makes point-in-time queries efficient. A "feature X as of time T" query reads only the row versions whose validity window covers T.
+**Read pattern**: point-in-time queries read the **vacuum-compacted view** of history, not the raw per-job deltas and closeouts. The vacuum joins closeouts onto matching delta rows by `id`, sets `_valid_to`/`_is_current` on the superseded versions, and emits a compacted monthly file whose `_valid_from`/`_valid_to` predicates can be pushed down directly. A query that globs every Parquet under `history/{dataset}/**` without applying the closeout join would over-report the prior version as current. The query layer's `featureHistory` and `datasetSnapshot` resolvers handle this by reading the compacted output plus the initial snapshot.
 
-**Vacuum**: a scheduled task merges small delta and closeout files into monthly compacted files. The initial snapshot is left untouched. Retention is configurable per dataset (default one year).
+**Vacuum**: a scheduled task merges small delta and closeout files into monthly compacted files, applying the closeout-to-delta join described above. The initial snapshot is left untouched. Retention is configurable per dataset (default one year).
 
 **Opt-in**: history is enabled per dataset via the dataset registry. Datasets without history enabled do not produce history rows.
 
@@ -232,7 +232,7 @@ Pipeline jobs. One item per pipeline execution.
 | `execution_arn` | Workflow execution identifier |
 | `error` | Human-readable error message on failure |
 
-A **DynamoDB Global Secondary Index (GSI)** on `(dataset_id, status)` supports the per-dataset concurrency check (one active job per dataset). The check is implemented as a `Query` on the GSI for `status IN (pending, validating, generating)`; the result determines whether a new job is created as `pending` or `queued`.
+A **DynamoDB Global Secondary Index (GSI)** named `dataset_id-status-index` (partition key `dataset_id`, sort key `status`) supports the per-dataset concurrency check (one active job per dataset). DynamoDB `Query` key conditions do not accept `IN` on the sort key, so the editing API iterates the small fixed set of active statuses (`pending`, `validating`, `generating`) and issues one `Query` per status with `KeyConditionExpression = "dataset_id = :did AND #s = :status"` and `Limit=1`. If any returns a row, the new job is created as `queued`; otherwise `pending`.
 
 ### Edit sessions table
 

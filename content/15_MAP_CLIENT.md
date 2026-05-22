@@ -93,7 +93,7 @@ flowchart LR
     end
 
     AUTH -- OIDC --> COG
-    UI -- "X-Auth via JWT or X-Api-Key" --> APIGW
+    UI -- "Authorization: Bearer JWT or X-Api-Key" --> APIGW
     APIGW --> STAC & FEAT & QL & EAPI & JAPI & TILE & RTILE & WMTS
 
     TOC --> STAC
@@ -115,7 +115,7 @@ flowchart LR
 Five React contexts carry the app's state. Each is a single source of truth for one concern:
 
 - **`AuthContext`** — Cognito sign-in state, ID and refresh tokens, current user profile, sign-out. Drives the `fetchWithAuth` helper that signs every outbound request with the user's JWT.
-- **`ApiKeyContext`** — API key fallback for non-interactive sessions and tests. Either auth path produces the same trusted `X-Auth-*` headers at the platform's gate.
+- **`ApiKeyContext`** — API key fallback for non-interactive sessions and tests. The client always sends one of `Authorization: Bearer <JWT>` or `X-Api-Key: <key>` to the gateway; the gateway's authoriser is what produces the trusted `X-Auth-*` headers for downstream backends. The browser never sees those `X-Auth-*` headers itself.
 - **`EditSessionContext`** — accumulates `PendingEdit[]` from the drawing and form components, exposes `submitAll()` that posts the batch to the editing API and returns the resulting job identifiers. Holds the active server-side session record (`ServerSession`) once one exists, with its status (`draft`, `uploading`, `submitted`, `validating`, `reviewing`, `approved`, `promoting`, `promoted`, `failed`, `rejected`, `cancelled`).
 - **`LayerContext`** — registry of layers currently on the map, their visibility, paint properties, and source URLs. The map view subscribes to it; component changes flow through `useLayerSync`.
 - **`SpatialParamsContext`** — current bbox, zoom, centre. Drives data fetches that need a spatial scope (catalogue search by extent, history queries within a bbox).
@@ -137,7 +137,7 @@ sequenceDiagram
     U->>APP: Open https://platform.example.com/map-client/
     APP->>U: Show LoginPanel
     U->>APP: Enter email + password
-    APP->>COG: USER_PASSWORD_AUTH (amazon-cognito-identity-js)
+    APP->>COG: USER_PASSWORD_AUTH (amazon-cognito-identity-js) — prototype only
     COG-->>APP: ID token + refresh token
     APP->>APP: AuthContext stores tokens, schedules refresh
     Note over U,BE: From this point on every backend call goes through the gate
@@ -149,7 +149,9 @@ sequenceDiagram
     APP->>U: Render catalogue
 ```
 
-For headless or scripted use, the same client can run with an API key supplied via `ApiKeyContext` instead of the Cognito flow. The `fetchWithAuth` helper transparently picks the available credential.
+For headless or scripted use, the same client can run with an API key supplied via `ApiKeyContext` instead of the Cognito flow. The `fetchWithAuth` helper transparently picks the available credential and adds either `Authorization: Bearer <JWT>` or `X-Api-Key: <key>` to the outgoing request.
+
+> **A note on the Cognito flow.** The prototype uses `USER_PASSWORD_AUTH` via `amazon-cognito-identity-js` because it lets a single-page app collect credentials inline without configuring a hosted UI domain. This is a prototype shortcut, not a recommended production posture: it does not compose with federated IdPs, hardware MFA, or many enterprise SSO configurations, and it requires the SPA to handle the password. A hardened build should switch to hosted-UI / authorization-code-with-PKCE (or whatever flow the enterprise IdP exposes); the `fetchWithAuth` contract stays the same because it only needs an access token. The path of least surprise is to leave `ApiKeyContext` as the long-term contract for non-interactive use and replace the interactive Cognito flow with a hosted-UI redirect for first-class deployments.
 
 ## Live link to the editing pipeline
 
@@ -165,7 +167,7 @@ The pattern is fully asynchronous: no WebSocket, no SSE. The platform's S3 + ETa
 
 The client never exposes operations a user cannot perform.
 
-- The catalogue only lists datasets in `X-Auth-User-Datasets`.
+- The catalogue only lists datasets the gateway's authoriser has injected into `X-Auth-User-Datasets` for the backend — the browser sees the filtered API responses (or `/rest/auth/me`), not the header itself.
 - Edit tools are hidden when `useEditPermission(datasetId)` returns false.
 - The Review Panel is hidden when the user's role is below `publisher`.
 - The GraphiQL panel is available to any authenticated user, but operations the user cannot authorise simply fail at the gate — the client does not pre-filter the schema.

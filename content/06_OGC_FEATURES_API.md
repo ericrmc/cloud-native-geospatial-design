@@ -47,7 +47,7 @@ The handler is the only custom code. The analytical engine, the data format, and
 
 **When to choose this shape:**
 - The deployment does not need spatial operations beyond bbox/attribute filtering and single-feature retrieval.
-- Lambda cold-start latency is acceptable (typically a fraction of a second once DuckDB and its extensions are loaded; warm requests are quick because the Lambda execution context reuses the loaded DuckDB instance).
+- Lambda cold-start latency is acceptable (typically a fraction of a second once DuckDB and its extensions are loaded; warm requests can reuse the loaded DuckDB instance *opportunistically* — Lambda execution environments are reused for warm invocations but the lifetime is not guaranteed, so the cache benefit is a bonus rather than a contract).
 - Operational simplicity is valued over query richness.
 
 > **Prior iteration.** This *was* in fact the platform's original OGC Features implementation: a Fargate service running DuckDB and serving feature queries directly. When the GraphQL query layer was introduced, the Fargate service was refactored into a thin Lambda façade calling GraphQL (shape B below) so the spatial engine wasn't duplicated. The lesson: if a deployment doesn't need the query layer, the standalone Lambda shape is the right starting point — the Fargate-with-DuckDB shape was over-engineered for OGC-only use cases. Lambda has caught up: DuckDB initialises fast enough on warm Lambda containers to make Fargate's persistent-cache advantage marginal for OGC queries.

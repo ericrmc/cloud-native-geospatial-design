@@ -64,11 +64,11 @@ sequenceDiagram
     Editor->>S3: PUT landing/{dataset}/{job}/data.fgb
     Editor->>GW: POST /edit-sessions/{id}/finalize
     GW->>EDIT: Authorised request
-    EDIT->>S3: (object-created event already queued)
-    S3-->>SQS: ObjectCreated event
-    SQS->>SFN: StartExecution
+    EDIT->>SFN: StartExecution (on finalise)
+    Note over S3,SQS: (Direct bulk-upload path: S3<br/>ObjectCreated → SQS → StartExecution.<br/>Session path uses the explicit<br/>finalise call instead.)
     SFN->>VAL: RunTask (DuckDB checks)
     VAL->>S3: Read landing/, write drafts/checks/results.json
+    VAL->>S3: On pass, write source/{dataset}/ partitions (authoritative)
     VAL-->>SFN: pass / warnings
     SFN->>GEN: RunTask (Tippecanoe)
     GEN->>S3: Read source/, write pmtiles/staging/{dataset}.pmtiles
@@ -97,7 +97,7 @@ The pipeline is composed of small services with well-defined responsibilities:
 |---|---|---|
 | **Editing API** | Lambda | User-facing write endpoints — manages edit sessions, generates S3 presigned upload URLs, handles finalisation, accepts reviewer approvals, and manages validation rules. |
 | **Upload gate** | Lambda | Lightweight authorisation check for direct bulk uploads (non-session edits), returning S3 presigned URLs. |
-| **SQS trigger** | Lambda | Bridges S3 `landing/` object-created events (delivered via SQS) into `StartExecution` calls on the Step Functions state machine. |
+| **SQS trigger** | Lambda | Bridges S3 `landing/` object-created events (delivered via SQS) into `StartExecution` calls on the Step Functions state machine. Used for the direct bulk-upload path; the session-based path invokes `StartExecution` explicitly from the editing API on finalise, so the SQS trigger does not gate on session state. |
 | **State machine** | Step Functions | Orchestrates validation → generation → promotion. Retry policies with exponential backoff cover transient `EcsAmazonECSException` and `States.Timeout` errors. Catch blocks route to the failure handler. |
 | **Validation task** | Fargate transient ECS task | Runs DuckDB schema, geometry, and user-defined SQL checks against an uploaded dataset. 4 vCPU, 16 GB, 100 GiB ephemeral storage. |
 | **Generation task** | Fargate transient ECS task | Produces serving artefacts: full or incremental PMTiles via Tippecanoe, plus delta and difference PMTiles for review. 4 vCPU, 16 GB, 200 GiB ephemeral storage. |
@@ -107,6 +107,18 @@ The pipeline is composed of small services with well-defined responsibilities:
 | **SQL edit executor** | Lambda (3 GiB, 15-minute timeout) | Performs bulk data corrections via DuckDB SQL, routed through the validation pipeline. |
 | **History vacuum** | Lambda, EventBridge-scheduled | Compacts per-job SCD2 history files into monthly archives. |
 | **Event log compactor** | Lambda, EventBridge-scheduled | Compacts per-job event-log files into monthly archives. |
+
+## State vocabulary at a glance
+
+Three lifecycles run side by side and are easy to confuse — they are deliberately separate so a long-lived edit session can survive multiple short job executions.
+
+| Lifecycle | Where it lives | States |
+|---|---|---|
+| **Job status** | `JOB#{job_id}` in the jobs table | `queued` → `pending` → `validating` → `generating` → `complete`; terminal also `failed`, `cancelled`. Pipeline execution lifecycle, no review states. |
+| **Session status** | `SESSION#{session_id}` in the edit-sessions table | `draft` → `uploading` → `submitted` → `validating` → `reviewing` (when `review_required=true`) → `approved` → `promoting` → `promoted`; terminal also `failed`, `rejected`, `cancelled`. User/review lifecycle, no `generating` state. |
+| **Dataset pipeline_status** | `DATASET#{dataset_id}` in the datasets table | `idle`, `processing`, `failed`. Derived summary of the most recent job, used for the concurrency check and dashboard rollups. |
+
+Generation always happens *after* validation and *before* review — the reviewer needs the generated delta and diff PMTiles to see what changed. The session does not pass through a `generating` state because the job state machine owns that transition while the session waits in `validating`/`reviewing`.
 
 ## Edit session state machine
 
@@ -141,7 +153,7 @@ Only one pipeline job may be active for a given dataset at a time. This prevents
 - Race conditions in atomic promotion.
 - For reviewed datasets: a second edit computing its delta against pre-promotion source data.
 
-**Mechanism**. The DynamoDB datasets table has a `pipeline_status` field. The jobs table has a **DynamoDB GSI** on `(dataset_id, status)`. When a new job is submitted, the editing API performs a `Query` on that GSI for `status IN (pending, validating, generating)`. If one is found, the new job is created with status `queued` using a DynamoDB `PutItem` with a conditional write, and the request returns HTTP 202.
+**Mechanism**. The DynamoDB datasets table has a `pipeline_status` field. The jobs table has a **DynamoDB GSI** on `(dataset_id, status)`. When a new job is submitted, the editing API issues a small number of `Query` calls against that GSI — one per active status (`pending`, `validating`, `generating`) — each using a key-condition expression of the form `dataset_id = :did AND #s = :status` with `Limit=1`. DynamoDB `Query` key conditions do not support `IN` on the sort key; iterating over the small fixed set of active statuses is the actual implementation. If any query returns a row, the new job is created with status `queued` using a DynamoDB `PutItem` with a conditional write, and the request returns HTTP 202.
 
 When a job reaches a terminal state (complete, failed, cancelled), the promotion Lambda (or failure handler, or cancel handler) calls a `dequeue_next_job` routine that:
 
@@ -185,7 +197,14 @@ A check must return rows of the form `(id, message)`. Each row is a violation; a
 
 ### Validation outcome
 
-The validation task writes results to `drafts/{dataset}/{session}/checks/results.json` and emits a summary to the session record:
+**Where validated data lands.** When validation passes, the same task writes the validated features to the authoritative `source/{dataset}/z={z}/x={x}/y={y}/data.parquet` partitions before the workflow advances to generation. There is no intermediate source-staging prefix. This is a deliberate trade-off — fewer S3 hops, simpler IAM — but it has two consequences worth naming:
+
+- **Reviewed datasets.** For datasets with `review_required=true`, OGC Features and the query layer reflect the proposed changes as soon as validation passes, even though the PMTiles swap (and therefore the map-client experience) waits for reviewer approval. The review gate is on **rendered tiles**, not on the underlying source. A future iteration could add a `source-staging/` prefix or a dataset-level pointer that promotion atomically updates; the current pipeline does not.
+- **Validation failure.** If validation fails, no source partitions are touched — `apply_*` paths only run after the result is marked valid. The failure mode is "no change," not "partial change."
+
+> *Inline note:* the audit picked this up as Finding 1. It is recorded here rather than hidden — the choice is in the code and a vendor rebuild should make the design tension explicit before deciding whether to keep the simpler shape.
+
+The validation task writes a results summary to `drafts/{dataset}/{session}/checks/results.json` and emits a summary to the session record:
 
 ```json
 {
@@ -213,7 +232,9 @@ GeoParquet (source/) → FlatGeobuf intermediate → Tippecanoe → PMTiles → 
 
 ### Incremental generation
 
-For `add`, `update`, `patch`, `delete`: reads only the affected partitions, builds a small PMTiles, and `tile-join`s it into the current live archive. Much faster for large datasets with localised edits.
+For additive edits where the affected partition set is known and a current live PMTiles archive exists, the generation task reads only the affected source partitions, builds a small patch PMTiles, and `tile-join`s it into the current archive to produce a new staging PMTiles. Much faster for large datasets with localised additions.
+
+`tile-join` is an overlay merge — it composes cleanly for adds but cannot remove stale encodings of features that moved or were deleted. For `replace`, `delete`, and any case where the affected partition set is unknown or the live PMTiles does not yet exist, the generation task falls back to **full regeneration**. Updates are handled by widening the affected-partition set on the source-data side (so the patch covers every tile that needs rewriting); deletes always full-regenerate. See [05 Vector Tiles](05_VECTOR_TILES.md) for the per-operation contract.
 
 ### Delta and difference PMTiles (reviewed datasets)
 
@@ -403,9 +424,9 @@ When a dataset has `history_enabled: true`, every promotion appends per-row hist
 - New versions of updated rows.
 - Closeout markers for prior versions of updated or deleted rows.
 
-The query layer exposes time-travel queries (`featureHistory`, `datasetSnapshot`) backed by predicate pushdown on the SCD2 columns.
+**Closeout files are not standalone row versions.** Each closeout file contains only `id`, `_valid_to`, `_is_current=false`, and a `_closeout` marker — enough to update the prior delta row's validity window, not a complete superseded row. A point-in-time query that simply globs every Parquet under `history/{dataset}/` and filters on `_valid_from`/`_valid_to` will therefore over-report the prior version as current. The platform's read path is **the history vacuum's compacted output**: the vacuum joins closeouts onto the matching delta rows by `id`, sets `_valid_to` and `_is_current=false` on the superseded versions, and writes a compacted monthly file. Time-travel queries should read the compacted view (or the initial snapshot for periods before history was enabled) rather than the raw per-job deltas and closeouts. The query layer exposes `featureHistory` and `datasetSnapshot` over that compacted view, backed by predicate pushdown on the SCD2 columns.
 
-A scheduled history vacuum compacts small delta files into monthly archives, keeping the read path performant as datasets accumulate history. Retention is configurable per dataset (default one year).
+A scheduled history vacuum compacts small delta files (and applies closeouts as above) into monthly archives, keeping the read path performant as datasets accumulate history. Retention is configurable per dataset (default one year).
 
 ## Operational state
 

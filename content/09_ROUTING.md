@@ -59,7 +59,7 @@ The query layer integrates routing as a set of GraphQL operations that:
 3. Wrap responses as `Feature` objects.
 4. Return them in the same shape as any other operation.
 
-This means a workflow like *"compute a 15-minute drive-time isochrone from each fire station, union them, intersect with property boundaries, save the result as a coverage dataset"* can be expressed as a single GraphQL query that touches the routing engine and the spatial engine without the user knowing where one ends and the other begins.
+This means a workflow like *"compute a 15-minute drive-time isochrone from each fire station, union them, intersect with property boundaries, save the result as a vector dataset"* can be expressed as a single GraphQL query that touches the routing engine and the spatial engine without the user knowing where one ends and the other begins. The result is vector — polygon, line, or point features — not a raster coverage; routing operations return GeoJSON-shaped `Feature`s throughout.
 
 **Per-request limits.** The shared input resolver enforces a configurable batch size (typically 50 features) to prevent runaway calls. Operations that need to call the routing engine for every feature in a large dataset are rejected; the client must batch.
 

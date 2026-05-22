@@ -32,7 +32,7 @@ The service is CPU-intensive (GDAL processing) and benefits from a few GB of mem
 
 ## WMTS/WMS proxy
 
-OGC WMTS 1.0.0 and WMS 1.3.0 are the lingua franca for desktop GIS interoperability. Neither QGIS nor ArcGIS speak XYZ tiles natively; both speak WMTS and WMS.
+OGC WMTS 1.0.0 and WMS 1.3.0 are the lingua franca for desktop GIS interoperability — they are the most portable contracts for governed enterprise connections, capability documents, and credentialled access. QGIS does support XYZ tiles natively (the "XYZ Tiles" connection type, including bearer-token headers), so an XYZ endpoint is a viable second-best for desktop use; ArcGIS's enterprise workflows still expect WMTS/WMS in most deployments. The platform exposes both: XYZ on the tile servers directly and WMTS/WMS via the proxy.
 
 A lightweight Fargate service translates WMTS/WMS requests into raster tile server requests. The proxy generates the WMTS GetCapabilities XML dynamically from the DynamoDB dataset registry — there is no static configuration file to maintain per dataset.
 

@@ -107,7 +107,7 @@ For each request, the authoriser computes:
 | `project` | Restricted to a specific project group. |
 | `internal` | Restricted to internal organisational use. |
 
-The scope is currently informational on the authorisation side; it appears in the permission context and is intended to be enforced by individual backends that care about scope-aware filtering. Backends that do not enforce scope rely on the dataset list alone.
+The scope is currently informational on the authorisation side: the authoriser caps role and computes the accessible-dataset list, but it does not filter datasets by scope. Scope is injected into `X-Auth-User-Scope` for downstream backends that choose to enforce it. No backend in the prototype actually does — the access decision in practice is "is the dataset in the user's `X-Auth-User-Datasets` list?", and scope is metadata for future per-route enforcement. A stricter contract would push scope evaluation into the authoriser (so a request for an `internal`-scoped dataset by a `public`-scoped caller never reaches the backend) or add scope checks to every read backend; both are reachable extensions.
 
 ## API keys
 
@@ -115,9 +115,10 @@ API keys are the principal mechanism for desktop GIS, scripts, and any client th
 
 **Issuance:**
 - An admin (or a user via self-service) creates a key with an owner type (`user` or `group`) and an owner identifier. The platform generates a random key, computes its SHA-256 hash, stores the hash with the metadata, and returns the raw key once. The raw key is never stored or retrievable thereafter.
-- The key's effective permissions are:
-  - **User-scoped keys** receive the `viewer` role with no datasets unless the user has explicit grants — these are useful for self-service access to public datasets only.
-  - **Group-scoped keys** inherit the group's datasets with the `viewer` role. This is the canonical way to grant a desktop GIS team access to a set of layers.
+- The key's effective permissions are deliberately conservative regardless of how the request was framed:
+  - **User-scoped keys** receive the `viewer` role and access only to datasets explicitly marked `public`. The owning user's group memberships and dataset grants are *not* inherited — this is a deliberate downgrade so that a leaked key cannot exercise the caller's elevated roles or private dataset access.
+  - **Group-scoped keys** inherit the owning group's datasets (and group claims, which feed RLS) at the `viewer` role. This is the canonical way to grant a desktop GIS team access to a set of layers.
+  - The `scope` on every API key is always `public` in storage. There is no request-time `scope` parameter; any `scope` field in client examples is informational only and is not honoured by the auth path.
 
 **Use:**
 - Clients send the raw key in an `X-Api-Key` header (or, where supported, as a query parameter).
@@ -128,7 +129,7 @@ API keys are the principal mechanism for desktop GIS, scripts, and any client th
 
 ## Row-level security (RLS)
 
-RLS filters individual feature rows within an authorised dataset. It is configured per-dataset and applies only to the OGC Features API. (Vector tiles are byte-served and cannot be row-filtered at the tile layer; this is a known limit of the format.)
+RLS filters individual feature rows within an authorised dataset. It is configured per-dataset and is enforced in **the query layer**, which is where the DuckDB-backed read path actually lives. The OGC Features API is a thin HTTP façade over GraphQL in this prototype, so OGC reads pick up the same RLS predicates as direct GraphQL reads. Any feature-returning read path that composes onto the same engine — OGC Features REST, direct GraphQL queries, the history resolvers — applies the same per-row filters and the same `platform_admin`/`data_manager` bypass. Vector tiles are byte-served and cannot be row-filtered at the tile layer; this is a known limit of the format. If a future deployment adopts the standalone-Lambda-over-GeoParquet shape for OGC (no query layer), the same RLS rule set must be loaded and applied in that Lambda — the rules live in DynamoDB, not in either implementation.
 
 **Configuration model**: each RLS rule is `(dataset, column, claim, operator)`:
 
@@ -226,7 +227,7 @@ sequenceDiagram
 
 **Operators supported on RLS rules:** `eq` (exact match), `in` (multi-value match — useful when a single user belongs to multiple groups with the same claim key), `contains` (substring — useful for hierarchical identifiers).
 
-**A note on vector tiles.** RLS applies to the OGC Features API (and to the query layer where deployed). Vector tiles cannot be filtered per-row at the tile layer — PMTiles is byte-served and the server cannot evaluate predicates. If a dataset must be tightly row-restricted, expose it through OGC Features only, not as a vector tile layer. For datasets where row visibility differs only by category (not by tenant), build separate tile layers per category instead.
+**A note on vector tiles.** RLS applies to every feature-returning read path through the query layer — direct GraphQL and the OGC Features façade. Vector tiles cannot be filtered per-row at the tile layer — PMTiles is byte-served and the server cannot evaluate predicates. If a dataset must be tightly row-restricted, expose it through OGC Features (or direct GraphQL) only, not as a vector tile layer. For datasets where row visibility differs only by category (not by tenant), build separate tile layers per category instead.
 
 ## Public access
 

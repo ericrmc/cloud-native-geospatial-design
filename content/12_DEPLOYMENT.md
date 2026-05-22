@@ -39,9 +39,11 @@ Each service group is configured by a scaling mode. Three modes are defined:
 
 | Mode | Behaviour |
 |---|---|
-| `off` | Zero running tasks. Services scale up only on first request. Cost approaches zero. |
-| `minimal` | One or two tasks per service. Steady-state low cost; first request after idle scales further if needed. |
+| `off` | Zero running tasks (`desiredCount=0`). Cost approaches zero. **First-request behaviour: the request fails with HTTP 503** because the ALB target group has no healthy targets, and CPU-based target tracking only scales out once a CPU datapoint exists (no requests = no CPU). The prototype ships no wake-up Lambda, no scheduled warmer, and no request-count-based scaler — `off` means "unavailable until manually woken." A hardened deployment should either bind a small Lambda scaler to the ALB 5xx alarm (sets `desiredCount=1`, drops back after the scale-in cooldown), or treat `off` as "stopped" and require an operator to scale up before use. |
+| `minimal` | One task per service kept warm. Steady-state low cost; auto-scaling can grow further if CPU rises. This is the recommended default for any service that fronts interactive traffic. |
 | `performance` | Multiple pre-warmed tasks, higher CPU and memory allocations. Consistent low-latency response; higher cost. |
+
+> *In plain terms:* `off` is genuinely off — not "off but ready to wake silently." A client hitting a service in `off` mode sees a 503 and is expected to retry after the operator (or a wake-up Lambda) has scaled the service to at least one task. The first task then takes 60–120 seconds to start (Fargate task launch, image pull, extension load, health-check pass) before requests can be served. Use `off` for development environments and demos where unavailability is acceptable between sessions, not for traffic-serving environments. The same trade-off is described in [07 Query Layer](07_QUERY_LAYER.md) for the query layer specifically.
 
 The mode is a deployment parameter. Different environments typically run in different modes (`dev` in minimal, `prod` in performance). The mode is independent of which service groups are deployed.
 
@@ -68,7 +70,7 @@ Services are placed on **Fargate** (long-running ECS services or transient ECS t
 | Workload | Compute | Rationale |
 |---|---|---|
 | Heavy data engines (DuckDB, GDAL, Tippecanoe, routing graphs) | Fargate service | Long warm-up, persistent caches, large memory footprint |
-| Tile servers (vector via go-pmtiles, raster via TiTiler) | Fargate service | Benefit from warm caches; scale-to-zero supported via desired-count 0 |
+| Tile servers (vector via go-pmtiles, raster via TiTiler) | Fargate service | Benefit from warm caches; desired-count 0 is supported but means 503-until-woken (see scaling-modes note above) |
 | OGC API Features (standalone shape) | Lambda | Thin handler, fast cold start, pay-per-request |
 | OGC API Features (façade shape) | Lambda | Same — the work is in the Fargate query layer |
 | Authoriser | Lambda | Tiny stateless logic; latency-critical |

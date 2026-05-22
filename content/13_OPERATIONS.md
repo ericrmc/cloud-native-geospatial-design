@@ -66,35 +66,40 @@ Each alarm should link to a runbook section below.
 
 ## Common queries
 
-Useful queries to keep handy, expressed in **CloudWatch Logs Insights** syntax against the API Gateway access-log group:
+Useful queries to keep handy, expressed in **CloudWatch Logs Insights** syntax. The first three target the **API Gateway access-log group** (request-path, status, user identity from the authoriser context); the last targets the **dataset event log** under `metadata/dataset_events/` (or, if you have promoted it to Athena, the Athena table over that prefix) — job failures are recorded there, not in the API access logs.
 
-**Top users by request count (last 24 hours)**:
+**Top users by request count, API Gateway access logs (last 24 hours)**:
 ```
 filter userId != '' and userId != 'anonymous'
 | stats count(*) as requests by userId
 | sort requests desc | limit 20
 ```
 
-**Data egress per user**:
+**Data egress per user, API Gateway access logs**:
 ```
 filter userId != '' and userId != 'anonymous'
 | stats sum(responseLength) as bytes by userId
 | sort bytes desc
 ```
 
-**Feature downloads by dataset**:
+**Feature downloads by dataset, API Gateway access logs**:
 ```
 filter path like '/features/v1/collections/'
 | stats count(*) as requests by path
 | sort requests desc
 ```
 
-**Job failures by dataset**:
+**Job failures by dataset, dataset event log** (Athena over `metadata/dataset_events/`):
+```sql
+SELECT dataset_id, COUNT(*) AS failures
+FROM dataset_events
+WHERE event_type = 'job_failed'
+  AND event_time > current_timestamp - interval '7' day
+GROUP BY dataset_id
+ORDER BY failures DESC
 ```
-filter status = 'failed'
-| stats count(*) as failures by dataset_id
-| sort failures desc
-```
+
+Job state itself lives in the DynamoDB jobs table and in Step Functions execution history; the event log is the durable, queryable record. If the API Gateway access log is configured to include the upstream response status only, it will not carry `dataset_id` for job-related calls — use the event log or the Step Functions console for failure forensics.
 
 ## Runbook — common failures
 

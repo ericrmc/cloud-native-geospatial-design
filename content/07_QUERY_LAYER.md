@@ -96,13 +96,17 @@ mutation saveQueryResult(
 ): SavedDataset
 ```
 
-The mutation:
-1. Validates the caller has the role to create datasets (typically `editor` or higher).
-2. Writes the features as a new GeoParquet dataset under `source/`.
-3. Registers the dataset in the registry.
-4. Triggers the editing pipeline to generate tiles (so the new dataset is immediately available via vector tiles, OGC features, and the query layer itself).
+The mutation in its hardened form would:
+1. Require an `editor` (or `data_manager`) role check.
+2. Write the result through a short-lived edit session so the editing pipeline's validation, generation, and review gates apply.
+3. Register the dataset in the registry on promotion.
+4. Make the new dataset available via vector tiles, OGC Features, and the query layer once the pipeline completes.
 
-This is the workflow primitive that turns the platform from "data hosting" into "spatial computing": a user can compute an isochrone, intersect it with property boundaries, and save the result as a layer their team can render.
+**What the prototype actually does today.** The resolver writes the result directly to a separate `derived/{name}/data.parquet` prefix (not `source/`), registers the dataset with `data_type=derived` and lineage pointing at the source query, and emits a `dataset_derived` event. It does **not** route the write through the editing pipeline — no Step Functions execution, no PMTiles generation, no review gate — and it does not enforce a role check at the schema or resolver layer. The dataset becomes queryable as derived GeoParquet but is not tile-rendered until a separate `regenerate` job is triggered manually.
+
+This gap is on the list of things to harden before a production build: route saves through the editing pipeline (so the same validation/review/promotion path applies), enforce the role check on the resolver, and write to `source/` only via promotion. The current behaviour is a prototype hook, not a finished surface.
+
+The intent of the primitive — turn the platform from "data hosting" into "spatial computing", letting a user compute an isochrone, intersect it with property boundaries, and save the result as a layer their team can render — is unchanged. The seam is the thing that needs more work.
 
 ## Context variables and view definitions
 
@@ -123,7 +127,7 @@ The recommended substrate for the spatial side of the query layer is **DuckDB** 
 - **In-process.** No separate database server. The query layer is a stateless service that loads DuckDB in-process.
 - **Connection durability.** A long-lived DuckDB connection retains the Parquet metadata cache (file layouts, row group boundaries, column statistics) across requests, so the second query against the same dataset skips the S3 metadata round trips. This is a meaningful performance gain.
 
-> *In plain terms:* the first query teaches DuckDB the shape of every Parquet file it touches; every subsequent query against that dataset starts already knowing which row groups to skip. Throwing the connection away after each request (as Lambda would) throws that knowledge away too.
+> *In plain terms:* the first query teaches DuckDB the shape of every Parquet file it touches; every subsequent query against that dataset can reuse that knowledge through DuckDB's own object-store cache layer. Lambda can keep its execution environment around between invocations opportunistically — sometimes the second request reuses the first's cache, sometimes it does not — but Fargate makes that reuse deliberate and long-lived.
 - **Standards interoperability.** GeoParquet is consumable by every modern data tool; the platform is not painting itself into a vendor corner.
 
 The query layer is designed to keep a warm DuckDB instance per container, with connection pooling per worker, extensions loaded once at startup, and periodic credential refresh for object storage access.
@@ -142,11 +146,11 @@ This means a client can express:
 
 The query layer runs as a **Fargate service**, not as Lambda. Fargate is chosen because:
 
-- **The DuckDB Parquet metadata cache survives only while the process is warm.** Lambda's per-invocation isolation defeats the cache benefit and forces every query to re-fetch row-group statistics from S3.
-- **The DuckDB spatial extension has a non-trivial load cost.** A long-lived Fargate task loads the extension once at startup; a Lambda would reload on every cold start.
-- **Interactive map traffic benefits from sustained warmth.** Scale-to-zero is preserved via Fargate Service Auto Scaling (desired count 0 in `off` mode, minimum 1 task in `minimal` mode, multiple pre-warmed tasks in `performance`).
+- **A warm DuckDB Parquet metadata cache amortises across many requests on Fargate.** Lambda can reuse execution environments opportunistically, so a hot Lambda gets some cache reuse too, but the lifetime is unpredictable and per-environment; Fargate gives deliberate, long-lived process warmth and controllable memory/cache lifetime. In the prototype the GraphQL service opens a fresh `:memory:` DuckDB connection per request and relies on DuckDB's own object-store cache layer for cross-request hits — a Fargate-resident process is the only place that cache can persist usefully.
+- **The DuckDB spatial extension has a non-trivial load cost.** A long-lived Fargate task loads the extension once at startup; a Lambda would reload on every cold start, and a process restart on Fargate is still expensive but uncommon.
+- **Interactive map traffic benefits from sustained warmth.** Scale-to-zero is supported via Fargate Service Auto Scaling: `off` mode runs zero tasks, `minimal` keeps one warm, `performance` pre-warms several.
 
-The cold-start cost of the first request after scale-up is on the order of tens of seconds (Fargate task start, image pull, DuckDB extension load, optional dataset warm-up). The platform's `minimal` scaling mode keeps one warm task at low cost.
+**First-request behaviour when desired=0.** There is **no wake-up Lambda, no scheduled warmer, no ALB-request-count scaler in the prototype.** A request arriving against a desired-count-0 service hits the ALB target group with no healthy targets and **returns HTTP 503** until target-tracking auto-scaling reacts to CPU/queue metrics, spins up the first task, image-pulls, and passes health checks — typically 60–120 seconds in measured runs. Clients must therefore expect: 503 on the first request after a quiet period, with retry-after behaviour required client-side. A hardened deployment should either (a) keep `minimal` (one warm task) as the default for any service serving interactive map traffic, or (b) add a small Lambda scaler triggered by the ALB 5xx alarm that sets `desiredCount` to 1 and then drops back to 0 after the scale-in cooldown. Neither (a) the explicit acceptance of 503-on-first nor (b) the Lambda scaler is present in the prototype — the off-mode design intent was always "manually woken before use", and that is the contract today.
 
 > **Why the OGC Features API has a different compute choice.** The OGC Features API (Lambda) and the query layer (Fargate) make opposite calls about the persistent-cache trade-off. The Features API serves simple, well-bounded queries (bbox + filter + limit) where the warmth advantage is small; Lambda's pay-per-invocation cost shape and zero idle cost win. The query layer serves multi-step composable workflows where the persistent cache amortises across many requests; Fargate's always-on cost is repaid by the cache hit rate.
 

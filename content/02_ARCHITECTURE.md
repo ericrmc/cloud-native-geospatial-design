@@ -64,7 +64,7 @@ The edge layer handles TLS termination, edge caching, and authorisation. Every r
 
 Components:
 
-- **CloudFront** — terminates TLS, caches responses according to per-route cache policies (see below), and forwards cache misses to the API Gateway origin. Cache keys for authenticated content include the `Authorization` and `X-Api-Key` request headers, so each credential gets its own edge entry.
+- **CloudFront** — terminates TLS, caches responses according to per-route cache policies (see below), and forwards cache misses to the API Gateway origin. Tile and metadata cache keys include both the `Authorization` and `X-Api-Key` request headers so each credential gets its own edge entry. Permission-sensitive APIs use a near-zero-TTL policy whose cache key includes `Authorization` only (CloudFront requires TTL > 0 to header-key, so `X-Api-Key` is forwarded but is not in the cache key for this policy class — see below).
 - **API Gateway HTTP API** — a single wildcard `{proxy+}` route attached to a Lambda custom authoriser, with a VPC Link integration to the internal ALB. Provides request throttling, structured CloudWatch access logging, CORS handling, and route-level configuration.
 - **Lambda authoriser** — a small Lambda function that resolves identity (Cognito or external-OIDC JWT, or platform-issued API key) into a permission context. The API Gateway HTTP API parameter-mapping feature turns the authoriser's response context into trusted `X-Auth-*` headers attached to the forwarded request. Backends never see the original token.
 
@@ -159,13 +159,15 @@ CloudFront is configured with three cache policies, each applied to a class of b
 
 | Policy class | TTL | Cache key includes | Applies to |
 |---|---|---|---|
-| Auth no-cache | 1 second | Default | Feature reads, admin APIs, edit APIs, job APIs — anything that must reflect current permissions |
+| Auth near-zero | 1 second (min/default/max) | `Authorization` header | Feature reads, admin APIs, edit APIs, job APIs, STAC, uploads — anything that must reflect current permissions |
 | API-key tiles | 7 days | `Authorization` and `X-Api-Key` headers | Vector tiles, raster tiles, WMTS, mosaics, capabilities documents |
 | API-key metadata | 1 hour | `Authorization` and `X-Api-Key` headers | TileJSON, STAC collections, dataset listings |
 
-Per-credential keying means a tile cached for one API key is not served to another, even if both have access to the same dataset. This is intentional: every distinct credential is verified at least once, and there is no risk of cross-credential cache reuse.
+> *In plain terms:* "every request is authorised" is true on cache miss. On a cache hit inside a one-second window, the credential header in the cache key is the only thing distinguishing one caller from another. For tiles and metadata, that key includes both `Authorization` and `X-Api-Key`, so JWT and API-key callers each get their own edge entry. For the near-zero auth policy, CloudFront requires `TTL > 0` to header-key the cache, and only `Authorization` is in the key — `X-Api-Key` is forwarded as a request header but not part of the cache key for that policy class. Two API-key callers hitting the same permission-sensitive URL within a one-second window can therefore share a cache entry. The trade-off was accepted because the alternative — a fully disabled cache policy on those paths — gives up CloudFront-level burst protection without buying meaningful isolation given a 1s TTL.
 
-> *In plain terms:* the same tile is stored at the edge once per credential. Tile bytes are cheap, but the guarantee that nobody ever reads a tile cached against someone else's permissions is valuable.
+Per-credential keying for the tile and metadata policies means a tile cached for one API key is not served to another, even if both have access to the same dataset. Every distinct credential is verified at least once, and there is no cross-credential cache reuse for those paths.
+
+> *In plain terms:* for tiles and metadata, the same artefact is stored at the edge once per credential. Tile bytes are cheap, but the guarantee that nobody ever reads a tile cached against someone else's permissions is valuable. For permission-sensitive APIs, the one-second TTL bounds the staleness window — a stricter contract would need a disabled cache policy *and* explicit `X-Api-Key` keying.
 
 CloudFront path-pattern invalidation (`/tiles/vector/{dataset}/*`) is issued by the promotion function on every successful pipeline run so edge caches re-fetch the new tiles.
 
@@ -222,4 +224,4 @@ Custom components are deliberately small because the design principle of stable 
 
 - The data layer is the most consequential design choice — go to [04 Data Layout](04_DATA_LAYOUT.md) next.
 - The authorisation model determines every request's behaviour — [03 Authorisation](03_AUTHORISATION.md).
-- The rationale for each technology pick is in [15 Design Decisions](16_DESIGN_DECISIONS.md).
+- The rationale for each technology pick is in [16 Design Decisions](16_DESIGN_DECISIONS.md).

@@ -1,4 +1,4 @@
-# 15 — Design Decisions
+# 16 — Design Decisions
 
 This is a standalone record of the pivotal design choices that shape the platform. Each entry is the *what* and *why* of a decision, plus the major alternatives that were considered, the conditions under which the decision should be revisited, and — where relevant — the **prior iteration** that taught the lesson. Several of these decisions were arrived at after an earlier shape was tried and failed; those scars are recorded because they are the most defensible part of the rationale.
 
@@ -6,7 +6,7 @@ The decisions are grouped by the area they primarily affect.
 
 ## Lessons from earlier iterations (read first)
 
-Five major shifts during the prototype's life shape the rest of the decisions:
+Six major shifts during the prototype's life shape the rest of the decisions:
 
 1. **Aurora PostgreSQL + pgSTAC was deployed, then removed.** The original design used Aurora Serverless v2 PostgreSQL with PostGIS and pgSTAC. Maintaining an always-on database for what turned out to be a serving workload was an order of magnitude more expensive than necessary, and the database became the single point of failure for scale-to-zero. The whole spatial-data layer was moved to S3-native formats (PMTiles, GeoParquet, COGs) and the database was deleted entirely. This is the headline lesson; D1 below codifies it.
 2. **Vector tiles ran on Martin (Rust, PostgreSQL-backed), then on go-pmtiles.** Martin's PostgreSQL dependency conflicted with lesson 1; its PMTiles support required service restarts on file change. Replaced with go-pmtiles, which reads S3 directly and refreshes on ETag change. D5 codifies it.
@@ -91,7 +91,7 @@ The platform's positioning, in one line: **no GeoServer, no MapServer, no Postgr
 
 **Why.** Single-file archive (one S3 object per dataset), no database, supports millions of features, automatic refresh on atomic CopyObject swap. The format and tooling are mature.
 
-**Prior iteration.** The platform originally ran **Martin** (Rust, PostgreSQL-backed) for vector tiles. Martin's PostgreSQL dependency conflicted with D1; Martin's PMTiles support did exist but only re-read the file index at process startup, so any update to a PMTiles file required a service restart. go-pmtiles refreshes automatically on ETag change, which composes cleanly with the atomic-swap promotion pattern (D5 in [11 Editing Pipeline](11_EDITING_PIPELINE.md)).
+**Prior iteration.** The platform originally ran **Martin** (Rust, PostgreSQL-backed) for vector tiles. Martin's PostgreSQL dependency conflicted with D1; Martin's PMTiles support did exist but only re-read the file index at process startup, so any update to a PMTiles file required a service restart. go-pmtiles refreshes automatically on ETag change, which composes cleanly with the atomic-swap promotion pattern described in [11 Editing Pipeline](11_EDITING_PIPELINE.md).
 
 **Alternatives.** [pg_tileserv](https://github.com/CrunchyData/pg_tileserv) — CrunchyData's lightweight PostGIS-backed vector tile server; same DB conflict as Martin. A database-backed tile generator more broadly (introduces a database; not aligned with D1). Pre-rendered tile pyramids in S3 as individual objects (massive object count, harder lifecycle, no atomic-swap pattern).
 
@@ -183,7 +183,7 @@ The platform's positioning, in one line: **no GeoServer, no MapServer, no Postgr
 
 **Decision.** Container runtime hosts: raster tile server, vector tile server, query layer, OGC Coverages, WMTS proxy, routing engine, validation tasks, generation tasks. Function runtime hosts: authoriser, OGC Features (when standalone), STAC API, editing API, upload gate, job API, promotion function, scheduled maintenance.
 
-**Why.** Heavy engines benefit from persistent in-process caches (Parquet metadata, routing graphs, GDAL state); function runtime cold starts and per-invocation isolation defeat those benefits. Lightweight handlers cold-start in hundreds of milliseconds and amortise the runtime overhead well across many small invocations.
+**Why.** Heavy engines benefit from *deliberate, long-lived* in-process caches (Parquet metadata, routing graphs, GDAL state). Lambda can reuse execution environments opportunistically — a warm Lambda gets some cache reuse — but the lifetime is unpredictable and per-environment, which is not a basis to plan against for routing-graph or large-state caches. Fargate gives deliberate process warmth and controllable memory/cache lifetime. Cold-start cost for function runtimes is also high once the spatial extensions and routing graphs load; lightweight handlers (the auth, the OGC façade, the STAC reader) cold-start in hundreds of milliseconds and amortise the runtime overhead well across many small invocations.
 
 **Trade-off.** Two operational substrates instead of one. Resource scaling models differ.
 

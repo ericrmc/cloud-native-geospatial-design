@@ -41,7 +41,7 @@ The response contains the raw key, returned exactly once. Subsequent requests se
 X-Api-Key: <raw_key>
 ```
 
-A user-scoped API key inherits the calling user's permissions. A group-scoped API key inherits the group's datasets as `viewer`. Group-scoped keys are the canonical choice for desktop GIS teams.
+A user-scoped API key is deliberately conservative: it receives the `viewer` role and access only to `public` datasets, *not* the calling user's group memberships or private dataset grants. The downgrade is intentional — a leaked key cannot exercise the user's elevated roles. A group-scoped API key inherits the group's datasets (and the group's RLS-feeding claims) at `viewer`. Group-scoped keys are the canonical choice for desktop GIS teams.
 
 API keys are revoked by setting the `active` flag to false in the DynamoDB `api-keys` table; revocation takes effect within one minute (the authoriser Lambda's warm-container LRU cache TTL).
 
@@ -210,8 +210,10 @@ GET    /jobs/{id}                         (poll for status)
 ### Issue a self-service API key
 
 ```
-POST /rest/auth/me/apikey { "description": "QGIS at desk", "scope": "viewer" }
+POST /rest/auth/me/apikey { "description": "QGIS at desk" }
 ```
+
+The request takes a description only. There is no client-supplied `scope` field — every issued key is stored with `scope: public` and resolves to `role: viewer` at use. To grant a key access to private datasets, issue a *group-scoped* key for a group the user is a member of via the admin endpoint instead.
 
 ## Public access
 
@@ -240,4 +242,4 @@ The query layer's GraphQL schema is introspectable and the schema's evolution fo
 - **Cold-start latency.** In scale-to-zero deployments, the first request after idle may take tens of seconds to a couple of minutes (container services). Subsequent requests are fast.
 - **Cache effects.** Tiles cache for seven days per credential at the edge; metadata caches for one hour. Permission changes are visible within five minutes.
 - **No reorderable response.** OGC Features returns results in a consistent order (typically by feature ID).
-- **Standards conformance.** OGC APIs, STAC, WMTS, WMS, TileJSON, MVT all conform to their respective specifications. Clients that work with other implementations of these standards should work here.
+- **Standards conformance.** OGC APIs, STAC, WMTS, WMS, TileJSON, and MVT follow the relevant standards for the declared conformance classes the platform implements. Several optional classes are deliberately not exposed — WMS `GetFeatureInfo` and SLD styling are omitted from the WMTS/WMS proxy; OGC Features Transactions are typically omitted (the editing pipeline is the write surface, not WFS-T); STAC item search is collection-level only in this prototype (per-feature access is via OGC Features, per-COG access via Coverages or raster tiles). Clients that exercise only the conformance classes the platform declares should work with other implementations of the same classes.
