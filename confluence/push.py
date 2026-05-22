@@ -124,6 +124,7 @@ PAGE_ORDER = [
     "16_design_decisions.xml",
     "17_further_directions.xml",
     "18_glossary_and_references.xml",
+    "19_lakehouse_integration.xml",
 ]
 
 
