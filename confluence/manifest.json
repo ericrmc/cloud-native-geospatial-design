@@ -1,4 +1,8 @@
 {
+  "00_index.xml": {
+    "source": "00_INDEX.md",
+    "title": "Document index and reading paths"
+  },
   "01_principles.xml": {
     "source": "01_PRINCIPLES.md",
     "title": "01 — Principles"

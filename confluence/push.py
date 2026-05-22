@@ -48,6 +48,7 @@ STATE_PATH = HERE / "state.json"
 # Files in upload order. The first entry becomes the parent of the rest.
 PAGE_ORDER = [
     "index.xml",
+    "00_index.xml",
     "01_principles.xml",
     "02_architecture.xml",
     "03_authorisation.xml",

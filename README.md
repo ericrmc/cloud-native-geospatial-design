@@ -6,11 +6,12 @@ Hosted as a [Quartz](https://quartz.jzhao.xyz/) site so the cross-references bet
 
 ## Reading the site
 
-Start at the [Index](content/index.md). It lists the documents and suggests reading paths by audience (executive, architect, implementer, operator).
+Start at the [Introduction](content/index.md) for the framing and purpose of the work, then continue to the [Document index and reading paths](content/00_INDEX.md) for chapter-by-chapter navigation by audience (executive, architect, implementer, operator).
 
 The substance lives in `content/`:
 
-- `index.md` — navigation and AWS-as-reference framing
+- `index.md` — introduction: the brief, the approach, the economic case, three ways to use the work
+- `00_INDEX.md` — document index, reading paths, AWS-as-reference framing, and currency notes
 - `01_PRINCIPLES.md` — design philosophy and non-goals
 - `02_ARCHITECTURE.md` — system shape, request flow, cache classes
 - `03_AUTHORISATION.md` — identity, permission model, RLS
