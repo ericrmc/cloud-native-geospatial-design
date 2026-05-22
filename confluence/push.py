@@ -210,11 +210,19 @@ class Confluence:
                 return json.loads(payload) if payload else {}
         except urllib.error.HTTPError as e:
             err_body = e.read().decode("utf-8", errors="replace")
+            e.response_body = err_body  # type: ignore[attr-defined]
             print(
                 f"    HTTP {e.code} on {method} {path}\n    Response: {err_body[:1000]}",
                 file=sys.stderr,
             )
             raise
+
+    def get_attachment(self, attachment_id: str) -> dict:
+        """Fetch attachment metadata, including size and version."""
+        return self._request(
+            "GET",
+            f"/wiki/rest/api/content/{attachment_id}?expand=extensions,version",
+        )
 
     def create_attachment(self, page_id: str, file_path: Path) -> str:
         """Upload a new attachment to a page. Returns the attachment ID."""
@@ -232,13 +240,45 @@ class Confluence:
     def update_attachment(
         self, page_id: str, attachment_id: str, file_path: Path
     ) -> str:
-        """Replace an existing attachment's binary data. Returns the attachment ID."""
-        result = self._multipart_request(
-            "POST",
-            f"/wiki/rest/api/content/{page_id}/child/attachment/{attachment_id}/data",
-            file_path,
-            comment="Diagram re-rendered by convert.py",
-        )
+        """Replace an existing attachment's binary data. Returns the attachment ID.
+
+        Confluence Cloud sometimes returns HTTP 500 with an
+        `UnexpectedRollbackException` when the uploaded bytes are identical to
+        the current attachment content — its internal version-bump transaction
+        marks itself rollback-only and the outer transaction throws. The
+        attachment is unchanged in that case, so we verify by size and treat
+        the upload as a no-op success rather than failing the whole push.
+        """
+        try:
+            result = self._multipart_request(
+                "POST",
+                f"/wiki/rest/api/content/{page_id}/child/attachment/{attachment_id}/data",
+                file_path,
+                comment="Diagram re-rendered by convert.py",
+            )
+        except urllib.error.HTTPError as e:
+            body = getattr(e, "response_body", "") or ""
+            if e.code == 500 and "UnexpectedRollbackException" in body:
+                try:
+                    meta = self.get_attachment(attachment_id)
+                except urllib.error.HTTPError:
+                    print(
+                        f"    Rollback received and metadata fetch failed; re-raising.",
+                        file=sys.stderr,
+                    )
+                    raise e
+                server_size = meta.get("extensions", {}).get("fileSize")
+                local_size = file_path.stat().st_size
+                if server_size is not None and int(server_size) == local_size:
+                    print(
+                        f"    Rollback recovered: attachment {attachment_id} already matches local content ({local_size} bytes). Continuing."
+                    )
+                    return attachment_id
+                print(
+                    f"    Rollback received but server size ({server_size}) != local size ({local_size}); re-raising.",
+                    file=sys.stderr,
+                )
+            raise
         if isinstance(result, dict):
             if "id" in result:
                 return result["id"]
