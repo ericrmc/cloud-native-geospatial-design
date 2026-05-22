@@ -136,18 +136,23 @@ This model eliminates branch drift: there is no dev branch separate from prod, n
 
 ## Resource sizing guidance
 
-Indicative starting points for the container-runtime services in `performance` mode. Actual sizing depends on data volume and traffic.
+Per-service container sizing as configured in the prototype's `scaling_config.py`. Values vary by mode (`off` / `minimal` / `performance`); the table below shows the **performance** mode allocation. Validation and generation tasks are mode-independent — they are transient ECS tasks sized for the work, not long-running services. A vendor build should re-baseline against observed traffic rather than inherit these values uncritically; the prototype was sized empirically against light development load.
 
-| Service | CPU | Memory | Task count |
+| Service | CPU (perf) | Memory (perf) | Task count (perf) |
 |---|---|---|---|
-| Raster tile server | 4 vCPU | 8 GB | 10, autoscale to 50 on CPU |
-| Vector tile server | 1 vCPU | 1 GB | 6, autoscale to 15 |
-| WMTS/WMS proxy | 2 vCPU | 4 GB | 10, autoscale to 20 |
-| Query layer | 4 vCPU | 8 GB | 2, autoscale to 8 |
-| Coverages API | 2 vCPU | 4 GB | 3, autoscale to 10 |
-| Routing engine | 4 vCPU | 8 GB | 2, autoscale to 6 |
-| Validation task (per execution) | 4 vCPU | 16 GB | 100 GB ephemeral storage |
-| Generation task (per execution) | 4 vCPU | 16 GB | 200 GB ephemeral storage |
+| Raster tile server (TiTiler) | 4 vCPU | 8 GB | desired 10, max 50 on CPU |
+| Vector tile server (go-pmtiles) | 0.25 vCPU | 512 MB | desired 6, max 15 |
+| WMTS/WMS proxy | 4 vCPU | 8 GB | desired 10, max 20 |
+| Query layer (GraphQL) | 1 vCPU | 2 GB | desired 2, max 8 |
+| Coverages API | 2 vCPU | 4 GB | desired 3, max 10 |
+| Routing engine (Valhalla) | 4 vCPU | 8 GB | desired 2, max 6 |
+| Validation task (per execution) | 4 vCPU | 16 GB | 100 GiB ephemeral storage |
+| Generation task (per execution) | 4 vCPU | 16 GB | 200 GiB ephemeral storage |
+
+A couple of these look surprising and are worth naming:
+
+- **Vector tile server is intentionally tiny.** go-pmtiles is a byte-range proxy onto S3 — almost no in-process work — so 0.25 vCPU / 512 MB per task suffices and horizontal scale-out covers traffic.
+- **Query layer is smaller than its workload suggests.** The prototype runs the GraphQL service at 1 vCPU / 2 GB even in performance mode because the DuckDB-in-process read path was sized for development-shaped queries, not production fan-out. **This is the most likely place a vendor build should up-size first** — bump to 2–4 vCPU and 4–8 GB if interactive spatial composition is a real workload.
 
 Function-runtime services are typically 256–1024 MB memory, with timeouts appropriate to the work (30 seconds for HTTP handlers, 5–15 minutes for batch maintenance jobs).
 

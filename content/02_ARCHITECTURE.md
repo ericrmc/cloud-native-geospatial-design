@@ -103,7 +103,7 @@ See [11 Editing Pipeline](11_EDITING_PIPELINE.md) for the full state machine.
 Long-running concerns that are not in the request path of any user.
 
 - **Policy API (Lambda)** — administrative REST surface for managing identity ceilings, platform groups, projects, group claims, dataset registration, row-level security configuration, API keys, and user invitations. See [03 Authorisation](03_AUTHORISATION.md).
-- **Dataset sync (Lambda, EventBridge-scheduled)** — scanner that reconciles the DynamoDB dataset registry against actual S3 contents, surfacing newly-arrived datasets for review.
+- **Dataset sync (Lambda, EventBridge-scheduled)** — scanner that **validates** existing dataset registry entries against actual S3 contents, flagging registry rows whose referenced S3 paths no longer exist. The scanner does not create new registry rows for unknown S3 contents — dataset registration is always an explicit Policy-API or pipeline action. The original design intent was auto-creation of `needs_review` skeleton entries for surfaced new content; the prototype landed on validation-only as the safer default.
 - **History vacuum (Lambda, EventBridge-scheduled)** — compactor that merges per-edit SCD2 history files into monthly archives.
 - **Event-log compactor (Lambda, EventBridge-scheduled)** — same pattern for the per-dataset event log under `metadata/dataset_events/`.
 

@@ -125,11 +125,13 @@ API keys are the principal mechanism for desktop GIS, scripts, and any client th
 - The authoriser hashes the incoming key, looks it up, and proceeds with the resolved owner's permissions.
 
 **Revocation:**
-- Setting a key's `active` flag to false revokes it. The authoriser checks `active` on every cache miss; warm authoriser caches will continue to honour the key for up to one minute (see "Caching" below).
+- Setting a key's `active` flag to false revokes it. The authoriser checks `active` on every cache miss; warm authoriser caches will continue to honour the key for up to the cache TTL (5 minutes — see "Caching" below).
 
 ## Row-level security (RLS)
 
-RLS filters individual feature rows within an authorised dataset. It is configured per-dataset and is enforced in **the query layer**, which is where the DuckDB-backed read path actually lives. The OGC Features API is a thin HTTP façade over GraphQL in this prototype, so OGC reads pick up the same RLS predicates as direct GraphQL reads. Any feature-returning read path that composes onto the same engine — OGC Features REST, direct GraphQL queries, the history resolvers — applies the same per-row filters and the same `platform_admin`/`data_manager` bypass. Vector tiles are byte-served and cannot be row-filtered at the tile layer; this is a known limit of the format. If a future deployment adopts the standalone-Lambda-over-GeoParquet shape for OGC (no query layer), the same RLS rule set must be loaded and applied in that Lambda — the rules live in DynamoDB, not in either implementation.
+RLS filters individual feature rows within an authorised dataset. The rules themselves are configured per-dataset and stored centrally in DynamoDB (`DATASET#{id}` / `RLS#{column}` items). Enforcement happens in whichever read backend touches the data: in the prototype that means **the query layer** (GraphQL, Fargate, DuckDB-backed), and since the OGC Features API is a thin HTTP façade over GraphQL, OGC reads pick up the same RLS predicates by composition. Any feature-returning read path that composes onto the same engine — OGC Features REST, direct GraphQL queries, the history resolvers — applies the same per-row filters and the same `platform_admin`/`data_manager` bypass. Vector tiles are byte-served and cannot be row-filtered at the tile layer; this is a known limit of the format.
+
+**OGC-only deployments.** A deployment that chooses Shape A from [06 OGC Features API](06_OGC_FEATURES_API.md) — standalone Lambda over GeoParquet, no query layer — has to load the same RLS rule set into that Lambda and translate it into the same SQL `WHERE` clauses. The DynamoDB rules are the source of truth in both shapes; only the *enforcement code* changes. Treat RLS as a per-deployment responsibility of whichever Lambda or service does the feature read, not a property of the OGC façade.
 
 **Configuration model**: each RLS rule is `(dataset, column, claim, operator)`:
 
@@ -265,7 +267,7 @@ The API Gateway HTTP API authoriser result cache is **disabled** (TTL=0). Every 
 ```mermaid
 flowchart TB
     REQ["Incoming request<br/>Authorization or X-Api-Key"] --> HASH["SHA-256 hash of credential<br/>(used as cache key)"]
-    HASH --> WARM{"Warm LRU cache hit?<br/>(60s TTL, allow only)"}
+    HASH --> WARM{"Warm LRU cache hit?<br/>(5 min TTL, allow only)"}
     WARM -->|hit| CTX["Cached permission context"]
     WARM -->|miss| VAL["Validate credential<br/>(JWT signature + expiry,<br/>or api-keys lookup)"]
     VAL --> PAR["Parallel DynamoDB Query"]
@@ -290,7 +292,7 @@ Two layers of caching inside the authoriser Lambda, with deliberate TTLs:
 
 | Layer | TTL | Behaviour on revocation |
 |---|---|---|
-| Authoriser result cache (warm Lambda container memory, LRU) | 60 seconds | Allow decisions are cached; deny decisions are not. A revoked key fails on the next request once the cache entry expires. |
+| Authoriser result cache (warm Lambda container memory, LRU) | 5 minutes | Allow decisions are cached; deny decisions are not. A revoked key fails on the next request once the cache entry expires (up to 5 minutes). |
 | Permission-data cache inside the authoriser (DynamoDB lookups for groups, datasets, claims) | 300 seconds | Permission upgrades take up to five minutes to propagate. |
 
 Cache entries are keyed on a SHA-256 hash of the credential, never on the raw credential, so raw keys are not retained in process memory across requests.
@@ -337,10 +339,10 @@ This design lets administrators provision access before the user exists in the I
 
 Permission changes — adding a user to a group, granting a dataset, revoking a key — take effect on a request-by-request basis but are subject to:
 
-1. **Authoriser warm-cache TTL** (60 seconds for allow decisions).
+1. **Authoriser warm-cache TTL** (5 minutes for allow decisions; matches the longest practical revocation latency).
 2. **Internal permission data cache** (300 seconds for groups/datasets/claims).
 
-In the worst case, a user's *upgrade* (added to a group with more permissions) is visible within five minutes. A *downgrade* (removed from a group) is visible within the same window. A revoked API key fails on the next request once the cache entry for that key has expired (within 60 seconds).
+In the worst case, a user's *upgrade* (added to a group with more permissions) is visible within five minutes. A *downgrade* (removed from a group) is visible within the same window. A revoked API key fails on the next request once the cache entry for that key has expired (within 5 minutes — same TTL as the rest of the authoriser cache).
 
 This is intentional: hitting the key-value store on every request would defeat the function-runtime scaling story. Sub-second revocation is achievable by tightening the TTLs at proportional cost in store reads.
 

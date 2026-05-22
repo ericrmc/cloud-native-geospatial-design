@@ -55,19 +55,15 @@ Operational fields exposed here but not in STAC:
 - `last_promoted_at`
 - `validation_sequences` — applied validation rules
 - `review_required`, `history_enabled` flags
-- `needs_review` — set by the auto-sync scanner
+- `needs_review` — reserved (set manually today; was intended to be auto-set by the sync scanner; see "Auto-sync of datasets" below)
 
 ## Auto-sync of datasets
 
-A **Lambda function on an EventBridge schedule** (typically every 15 minutes) reconciles the DynamoDB registry with the actual contents of S3. The scanner:
+A **Lambda function on an EventBridge schedule** (every 15 minutes) **validates the existing registry against S3**. For each registered dataset, the scanner checks that the GeoParquet / PMTiles / MosaicJSON paths referenced in the dataset's distributions list actually exist in S3. Missing paths are recorded against the dataset for operator attention.
 
-1. Lists relevant S3 prefixes (`source/`, `pmtiles/`, `cogs/`).
-2. Identifies datasets present in S3 but absent from the registry.
-3. Creates skeleton entries in DynamoDB with `active: false` and `needs_review: true`.
-4. Identifies datasets present in the registry but absent from S3 (stale references).
-5. Flags them for operator attention.
+The scanner does **not** create new registry rows for S3 content that has no matching entry. Dataset registration is always an explicit action — through the Policy API (`POST /rest/datasets`) or as a side-effect of the editing pipeline writing the first successful job. The original design called for the scanner to write `active: false`, `needs_review: true` skeleton entries when it found unowned S3 content; that auto-creation step was dropped during prototyping in favour of explicit registration, partly to avoid accidentally exposing files that landed in S3 outside the editing pipeline and partly because the surface for "needs review" classification was never built. A vendor build that wants the original auto-discovery behaviour should restore it deliberately, with the operator-facing classification UI included.
 
-The scanner is conservative: it never modifies existing dataset entries, never deletes anything, and never activates a dataset. It only surfaces work for an administrator. This avoids accidental exposure of files that landed in S3 outside the editing pipeline.
+The scanner is otherwise conservative: it never modifies dataset metadata, never deletes anything, and never activates a dataset.
 
 ## Public vs private datasets
 

@@ -19,7 +19,7 @@ The client is a static single-page application. It is built to a `dist/` directo
 
 A user signed in to the client can:
 
-1. **Browse the dataset catalogue.** A table of contents lists available datasets grouped by type (vector, raster, table). Dataset search filters by name and metadata. Each dataset entry shows status (active, deprecated, processing) so users see catalogue state, not just titles.
+1. **Browse the dataset catalogue.** A table of contents lists available datasets grouped by type (vector, raster, table). Dataset search filters by name and metadata. Each dataset entry shows a derived status badge composed from two registry fields — the `active`/`deprecated` lifecycle flag from `metadata` and the `pipeline_status` (`idle` / `processing` / `failed`) from the editing pipeline. "Active", "Deprecated", and "Processing" are display labels, not single-field values; see [04 Data Layout](04_DATA_LAYOUT.md) for the registry shape.
 2. **Add layers to the map.** Vector datasets render as MVT layers from the vector tile server; raster datasets render via the raster tile server or WMTS proxy depending on dataset type. The client respects the user's authorisation — only datasets the user has access to appear in the catalogue.
 3. **Inspect features.** Clicking a feature opens a popup with attribute values and links to the feature's history (SCD2 queries via the query layer).
 4. **Scrub time.** For datasets with a TIME dimension, a slider control switches the active mosaic and re-fetches tiles.
@@ -158,6 +158,8 @@ For headless or scripted use, the same client can run with an API key supplied v
 The "live" feel of the client comes from two cooperating mechanisms.
 
 **Job status polling.** When `submitAll()` succeeds, the editing API returns job identifiers. `JobToast` subscribes via the job API and polls until each job reaches a terminal state. The polling cadence is short (low single-digit seconds) so users see state transitions as they happen: `pending → validating → generating → promoting → complete` or the failure path. On completion the toast offers a link to the dataset and (for reviewed sessions) the Review Panel.
+
+**Backend availability and 503 handling.** If the deployment is configured with `off` scaling for the query layer or tile servers (see [12 Deployment](12_DEPLOYMENT.md)), the first request after a quiet period may return HTTP 503 while ECS scales the service back up — there is no auto-wake mechanism. The map client's `fetchWithAuth` should treat 503 as a transient error and retry with exponential backoff (typical wait 60–120 seconds), surfacing a "waking up" indicator rather than a hard error. Deployments running `minimal` or `performance` mode do not hit this path.
 
 **Draft tile rendering during generation.** For datasets with reviewed editing, the generation task writes delta and diff PMTiles to `drafts/{dataset}/{session}/...` as soon as it has them. The client requests these tile URLs against the vector tile server; once the objects exist, MapLibre renders them automatically on the next viewport change. The reviewer can see what is being produced *before* the workflow has even reached the review state — useful for catching obvious mistakes early.
 

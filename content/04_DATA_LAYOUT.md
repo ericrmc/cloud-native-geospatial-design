@@ -193,7 +193,7 @@ Separate from policies because access patterns differ (one item per credential, 
 | `active` | Boolean — flip to false to revoke |
 | `description` | Human-readable label |
 | `created_at` | Issuance timestamp |
-| `scope` | `public` (default) — reserved for future use |
+| `scope` | `public` (always — reserved for future per-scope enforcement; no request-time field) |
 
 ### Datasets table
 
@@ -274,11 +274,12 @@ Datasets reference an ordered list of validation sequences in their registry ent
 The bucket carries an **S3 Lifecycle policy** that transitions objects to **S3 Intelligent-Tiering** after 30 days. All prefixes share that base rule except:
 
 - `pmtiles/` — live tile artefacts. Keep in Standard; never transition.
-- `pmtiles/staging/` — short-lived; the promotion Lambda deletes the staging file on success. A safety-net lifecycle rule expires anything remaining after 1 day.
 - `landing/` — short-lived; the promotion Lambda removes the upload on job completion. A safety-net lifecycle rule expires anything remaining after 7 days.
 - `drafts/` — session content (delta and diff PMTiles, validation result JSON). Lifecycle rule deletes content after **90 days** regardless of session status — this is the *content-file* retention, distinct from the DynamoDB session-record TTL above. A still-active session whose drafts were lifecycle-deleted can re-run generation; the metadata persists in DynamoDB.
 
-**S3 Versioning** is enabled on the bucket so that an accidental delete or overwrite can be recovered. The lifecycle policy includes a rule that expires non-current versions after 30 days to bound the cost.
+**Design intent not implemented in the prototype.** A `pmtiles/staging/` safety-net expiry (1 day) and a noncurrent-version expiry rule (30 days, to bound S3 versioning cost) were both part of the design but were never added to the CDK lifecycle policy. The promotion Lambda's explicit staging-file delete handles the happy path; the safety net is missing for the failure path, so an aborted promotion can leave a staging PMTiles in place indefinitely. A vendor build should add both rules — they cost nothing and close a small storage-leak surface.
+
+**S3 Versioning** is enabled on the bucket so that an accidental delete or overwrite can be recovered.
 
 ## Access patterns at a glance
 
