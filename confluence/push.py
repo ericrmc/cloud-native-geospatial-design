@@ -243,11 +243,21 @@ class Confluence:
         """Replace an existing attachment's binary data. Returns the attachment ID.
 
         Confluence Cloud sometimes returns HTTP 500 with an
-        `UnexpectedRollbackException` when the uploaded bytes are identical to
-        the current attachment content — its internal version-bump transaction
-        marks itself rollback-only and the outer transaction throws. The
-        attachment is unchanged in that case, so we verify by size and treat
-        the upload as a no-op success rather than failing the whole push.
+        `UnexpectedRollbackException` from this endpoint:
+
+        1. When the uploaded bytes are byte-identical to the current attachment
+           content, its inner version-bump transaction marks itself
+           rollback-only and the outer transaction throws. The attachment is
+           unchanged in that case, so we verify by size and treat the upload
+           as a no-op success.
+        2. When the attachment's server-side version chain is in a degraded
+           state (a previous upload was partial, or a manual deletion left
+           stranded metadata). In that case the local and server sizes
+           disagree, the version-bump can't proceed, and we fall back to
+           deleting the broken attachment record and creating a new one with
+           the same filename. Pages reference attachments by filename in
+           storage XML, so the page keeps rendering against the new
+           attachment ID — only the ID stored in our state file changes.
         """
         try:
             result = self._multipart_request(
@@ -259,25 +269,47 @@ class Confluence:
         except urllib.error.HTTPError as e:
             body = getattr(e, "response_body", "") or ""
             if e.code == 500 and "UnexpectedRollbackException" in body:
+                meta = None
                 try:
                     meta = self.get_attachment(attachment_id)
                 except urllib.error.HTTPError:
                     print(
-                        f"    Rollback received and metadata fetch failed; re-raising.",
+                        f"    Rollback received and metadata fetch failed; falling back to delete + recreate.",
+                        file=sys.stderr,
+                    )
+                if meta is not None:
+                    server_size = meta.get("extensions", {}).get("fileSize")
+                    local_size = file_path.stat().st_size
+                    if server_size is not None and int(server_size) == local_size:
+                        print(
+                            f"    Rollback recovered: attachment {attachment_id} already matches local content ({local_size} bytes). Continuing."
+                        )
+                        return attachment_id
+                    print(
+                        f"    Rollback received and server size ({server_size}) != local size ({local_size}); attachment record is degraded. Falling back to delete + recreate.",
+                        file=sys.stderr,
+                    )
+                # Delete the broken attachment and recreate.
+                try:
+                    self.delete_attachment(attachment_id)
+                except urllib.error.HTTPError as de:
+                    if de.code not in (404, 410):
+                        print(
+                            f"    Delete of degraded attachment {attachment_id} failed ({de.code}); re-raising.",
+                            file=sys.stderr,
+                        )
+                        raise e
+                new_id = self.create_attachment(page_id, file_path)
+                if not new_id:
+                    print(
+                        f"    Recreate did not return an attachment ID; re-raising original error.",
                         file=sys.stderr,
                     )
                     raise e
-                server_size = meta.get("extensions", {}).get("fileSize")
-                local_size = file_path.stat().st_size
-                if server_size is not None and int(server_size) == local_size:
-                    print(
-                        f"    Rollback recovered: attachment {attachment_id} already matches local content ({local_size} bytes). Continuing."
-                    )
-                    return attachment_id
                 print(
-                    f"    Rollback received but server size ({server_size}) != local size ({local_size}); re-raising.",
-                    file=sys.stderr,
+                    f"    Rollback recovered via recreate: {attachment_id} → {new_id}."
                 )
+                return new_id
             raise
         if isinstance(result, dict):
             if "id" in result:
