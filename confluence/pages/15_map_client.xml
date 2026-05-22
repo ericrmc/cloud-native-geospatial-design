@@ -11,94 +11,13 @@
 <table><tbody><tr><th>Mode</th><th>What it shows</th><th>When it helps</th></tr><tr><td><code>operations</code></td><td>The delta PMTiles only — every edited feature, colour-coded by edit operation (add / update / delete) and validation status.</td><td>Quick scan of "what is the editor changing", with operation type immediately visible.</td></tr><tr><td><code>diff</code></td><td>The diff PMTiles — geometric ST_Difference between session and live data, classified by diff type (geometry added, geometry removed, attributes only, etc.).</td><td>Precise before-and-after visualisation, especially for polygon datasets where boundary changes are subtle.</td></tr><tr><td><code>preview</code></td><td>The live data composited with the delta — what the dataset will look like after promotion.</td><td>The "final read" before approving.</td></tr></tbody></table>
 <p>Switching modes re-styles the map without re-fetching tiles — both PMTiles files are loaded once when the review session opens.</p>
 <h1>Component architecture</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    subgraph React["React app (static SPA on S3 + CloudFront)"]
-        subgraph Contexts["Contexts (state)"]
-            AUTH[AuthContext<br/>Cognito sign-in]
-            APIK[ApiKeyContext<br/>API key fallback]
-            EDIT[EditSessionContext<br/>PendingEdit accumulator]
-            LAYER[LayerContext<br/>active layers]
-            SPATIAL[SpatialParamsContext<br/>bbox + viewport]
-        end
-        subgraph UI["UI components"]
-            MAP[MapView<br/>MapLibre instance]
-            TOC[TableOfContents<br/>+ DatasetSearch]
-            DRAW[DrawTools<br/>+ DrawControls]
-            FORM[SchemaForm<br/>RJSF attribute editor]
-            REV[ReviewPanel<br/>delta / diff / preview]
-            HIST[DatasetHistory<br/>SCD2 viewer]
-            GIQL[GraphiQLPanel<br/>query exploration]
-            TIME[TimeSlider]
-            JOB[JobToast<br/>pipeline status]
-        end
-        subgraph Hooks["Hooks (data + map glue)"]
-            HVEC[useVectorTileLayer]
-            HRAS[useRasterLayer]
-            HGEO[useGeoJsonLayer]
-            HREV[useReviewLayers]
-            HDYN[useDynamicLayers]
-            HSCH[useDatasetSchema]
-            HPERM[useEditPermission]
-            HSYNC[useLayerSync]
-        end
-    end
-
-    subgraph Platform["Platform surfaces"]
-        COG[Cognito]
-        APIGW[API Gateway HTTP API + Lambda authoriser]
-        STAC[STAC API]
-        FEAT[OGC Features API]
-        QL[Query layer / GraphQL]
-        EAPI[Editing API]
-        JAPI[Job API]
-        TILE[Vector tile server]
-        RTILE[Raster tile server]
-        WMTS[WMTS proxy]
-    end
-
-    AUTH -- OIDC --> COG
-    UI -- "X-Auth via JWT or X-Api-Key" --> APIGW
-    APIGW --> STAC & FEAT & QL & EAPI & JAPI & TILE & RTILE & WMTS
-
-    TOC --> STAC
-    HVEC --> TILE
-    HRAS --> RTILE
-    HREV --> TILE
-    HSCH --> FEAT
-    FORM --> EAPI
-    DRAW --> EDIT
-    EDIT --> EAPI
-    JOB --> JAPI
-    REV --> EAPI
-    HIST --> QL
-    GIQL --> QL]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="15_map_client-mermaid-1.png"/></ac:image></p>
 <h1>State and context model</h1>
 <p>Five React contexts carry the app's state. Each is a single source of truth for one concern:</p>
 <ul><li><strong><code>AuthContext</code></strong> — Cognito sign-in state, ID and refresh tokens, current user profile, sign-out. Drives the <code>fetchWithAuth</code> helper that signs every outbound request with the user's JWT.</li><li><strong><code>ApiKeyContext</code></strong> — API key fallback for non-interactive sessions and tests. Either auth path produces the same trusted <code>X-Auth-*</code> headers at the platform's gate.</li><li><strong><code>EditSessionContext</code></strong> — accumulates <code>PendingEdit[]</code> from the drawing and form components, exposes <code>submitAll()</code> that posts the batch to the editing API and returns the resulting job identifiers. Holds the active server-side session record (<code>ServerSession</code>) once one exists, with its status (<code>draft</code>, <code>uploading</code>, <code>submitted</code>, <code>validating</code>, <code>reviewing</code>, <code>approved</code>, <code>promoting</code>, <code>promoted</code>, <code>failed</code>, <code>rejected</code>, <code>cancelled</code>).</li><li><strong><code>LayerContext</code></strong> — registry of layers currently on the map, their visibility, paint properties, and source URLs. The map view subscribes to it; component changes flow through <code>useLayerSync</code>.</li><li><strong><code>SpatialParamsContext</code></strong> — current bbox, zoom, centre. Drives data fetches that need a spatial scope (catalogue search by extent, history queries within a bbox).</li></ul>
 <p>Per-component hooks compose these contexts. <code>useEditPermission(datasetId)</code> reads <code>AuthContext</code> and the dataset registry to determine whether the active user may edit the given dataset; <code>useDatasetSchema(datasetId)</code> fetches the JSON Schema once and caches it; <code>useReviewLayers(sessionId, mode)</code> builds the MapLibre layer specifications for the chosen review mode and applies them to the map instance.</p>
 <h1>Authentication flow</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant U as User
-    participant APP as Map client (React SPA)
-    participant COG as Cognito User Pool
-    participant GW as API Gateway HTTP API
-    participant AZ as Lambda Authoriser
-    participant BE as Platform backends
-
-    U->>APP: Open https://platform.example.com/map-client/
-    APP->>U: Show LoginPanel
-    U->>APP: Enter email + password
-    APP->>COG: USER_PASSWORD_AUTH (amazon-cognito-identity-js)
-    COG-->>APP: ID token + refresh token
-    APP->>APP: AuthContext stores tokens, schedules refresh
-    Note over U,BE: From this point on every backend call goes through the gate
-    APP->>GW: GET /stac/collections (Authorization: Bearer <JWT>)
-    GW->>AZ: invoke authoriser
-    AZ-->>GW: isAuthorized + X-Auth-* context
-    GW->>BE: forward with X-Auth-* headers
-    BE-->>APP: filtered to user's datasets
-    APP->>U: Render catalogue]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="15_map_client-mermaid-2.png"/></ac:image></p>
 <p>For headless or scripted use, the same client can run with an API key supplied via <code>ApiKeyContext</code> instead of the Cognito flow. The <code>fetchWithAuth</code> helper transparently picks the available credential.</p>
 <h1>Live link to the editing pipeline</h1>
 <p>The "live" feel of the client comes from two cooperating mechanisms.</p>

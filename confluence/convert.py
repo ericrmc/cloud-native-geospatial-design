@@ -12,7 +12,10 @@ Handles the Markdown features used in this corpus:
   - Paragraphs, bold, italic, inline code, links
   - Bulleted and numbered lists
   - Fenced code blocks (language tag preserved as Confluence code macro)
-  - Mermaid fenced blocks -> Confluence mermaid macro (see MERMAID_MACRO)
+  - Mermaid fenced blocks -> rendered to PNG via mermaid-cli (mmdc), emitted
+    as <ac:image><ri:attachment.../></ac:image> references. This avoids any
+    dependency on a Confluence Cloud mermaid app being installed in the
+    destination space — diagrams ship as page attachments.
   - Pipe tables
   - Standard blockquotes -> <blockquote>
   - "In plain terms" / "Prior iteration" italicised blockquotes -> info panel
@@ -29,6 +32,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 from xml.sax.saxutils import escape as _xml_escape
@@ -37,13 +42,12 @@ HERE = Path(__file__).resolve().parent
 CONTENT_DIR = HERE.parent / "content"
 PRIVATE_DIR = HERE.parent / "private"
 PAGES_DIR = HERE / "pages"
+DIAGRAMS_DIR = HERE / "diagrams"
 MANIFEST_PATH = HERE / "manifest.json"
 
-# The macro name for the mermaid app installed on the target Confluence Cloud
-# instance. Change here if you use a different app. Common values:
-#   - "mermaid-cloud"  (Stiltsoft "Mermaid Diagrams for Confluence" — Cloud)
-#   - "mermaid"        (some other apps and the legacy server macro)
-MERMAID_MACRO = "mermaid-cloud"
+# Pixel width for rendered PNG diagrams. mmdc auto-scales height.
+DIAGRAM_WIDTH = 1600
+DIAGRAM_BACKGROUND = "white"
 
 # Per-file source overrides for Confluence generation.
 #
@@ -61,6 +65,49 @@ SOURCE_OVERRIDES = {
 }
 
 ATTR_QUOTE = {'"': "&quot;"}
+
+
+# ---------------------------------------------------------------------------
+# Mermaid rendering — relies on the mermaid-cli (mmdc) binary being in PATH
+# ---------------------------------------------------------------------------
+
+def check_mmdc() -> None:
+    """Verify mermaid-cli (mmdc) is available; exit with a clear message if not."""
+    if shutil.which("mmdc") is None:
+        print(
+            "ERROR: mermaid-cli (mmdc) not found in PATH.\n"
+            "  Install: npm install -g @mermaid-js/mermaid-cli\n"
+            "  Then re-run convert.py.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+
+def render_diagram(mmd_path: Path, png_path: Path) -> None:
+    """Render one .mmd source file to a .png via mmdc."""
+    result = subprocess.run(
+        [
+            "mmdc",
+            "-i", str(mmd_path),
+            "-o", str(png_path),
+            "-w", str(DIAGRAM_WIDTH),
+            "-b", DIAGRAM_BACKGROUND,
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"mmdc failed on {mmd_path.name}: {result.stderr.strip() or result.stdout.strip()}"
+        )
+
+
+def reset_diagrams_dir() -> None:
+    """Clear stale diagram sources and images. Regenerated fresh each run."""
+    DIAGRAMS_DIR.mkdir(exist_ok=True)
+    for f in DIAGRAMS_DIR.iterdir():
+        if f.is_file():
+            f.unlink()
 
 
 def x(text: str) -> str:
@@ -190,8 +237,14 @@ def _render_inline(text: str, title_map: dict[str, str]) -> str:
 # ---------------------------------------------------------------------------
 
 class Converter:
-    def __init__(self, title_map: dict[str, str]) -> None:
+    def __init__(self, title_map: dict[str, str], diagram_stem: str = "") -> None:
         self.title_map = title_map
+        # Stem used to name extracted mermaid diagrams for this page, e.g.
+        # diagram_stem="02_architecture" -> "02_architecture-mermaid-1.png".
+        self.diagram_stem = diagram_stem
+        # Each entry is (filename, mermaid_source). Populated as the
+        # converter encounters fenced mermaid blocks.
+        self.diagrams: list[tuple[str, str]] = []
         self.out: list[str] = []
         self.lines: list[str] = []
         self.i = 0
@@ -308,10 +361,17 @@ class Converter:
         body = "\n".join(body_lines)
 
         if lang.lower() == "mermaid":
+            # Record the source and emit an attachment-image reference.
+            # The actual .mmd file is written and rendered by main(); push.py
+            # uploads the .png as a Confluence attachment so the
+            # ri:attachment reference here resolves at render time.
+            idx = len(self.diagrams) + 1
+            filename = f"{self.diagram_stem}-mermaid-{idx}.png"
+            self.diagrams.append((filename, body))
             self.out.append(
-                f'<ac:structured-macro ac:name="{MERMAID_MACRO}">'
-                f"<ac:plain-text-body><![CDATA[{cdata(body)}]]></ac:plain-text-body>"
-                f"</ac:structured-macro>"
+                f'<p><ac:image ac:align="center" ac:layout="center">'
+                f'<ri:attachment ri:filename="{xq(filename)}"/>'
+                f"</ac:image></p>"
             )
         else:
             params = ""
@@ -456,10 +516,14 @@ def main() -> int:
         print(f"Content directory not found: {CONTENT_DIR}", file=sys.stderr)
         return 1
 
+    check_mmdc()
+
     PAGES_DIR.mkdir(parents=True, exist_ok=True)
+    reset_diagrams_dir()
 
     titles = build_title_map()
-    manifest: dict[str, dict[str, str]] = {}
+    manifest: dict[str, dict] = {}
+    total_diagrams = 0
 
     for md_path in sorted(CONTENT_DIR.glob("*.md")):
         # Honour any Confluence-specific source override.
@@ -473,24 +537,45 @@ def main() -> int:
 
         md = source_path.read_text(encoding="utf-8")
         title = extract_title(md)
-        conv = Converter(titles)
+        out_name = output_filename(md_path.name)
+        diagram_stem = Path(out_name).stem  # e.g. "index" or "02_architecture"
+
+        conv = Converter(titles, diagram_stem)
         body = conv.convert(md)
 
-        out_name = output_filename(md_path.name)
         out_path = PAGES_DIR / out_name
         out_path.write_text(body + "\n", encoding="utf-8")
+
+        # Render any extracted mermaid diagrams for this page.
+        attachments: list[str] = []
+        for filename, mermaid_src in conv.diagrams:
+            mmd_path = DIAGRAMS_DIR / (filename[:-4] + ".mmd")
+            png_path = DIAGRAMS_DIR / filename
+            mmd_path.write_text(mermaid_src + "\n", encoding="utf-8")
+            try:
+                render_diagram(mmd_path, png_path)
+            except RuntimeError as err:
+                print(f"  ERROR rendering {filename}: {err}", file=sys.stderr)
+                return 1
+            attachments.append(filename)
+            total_diagrams += 1
 
         manifest[out_name] = {
             "source": source_label,
             "title": title,
+            "attachments": attachments,
         }
-        print(f"  {source_label:36s} -> pages/{out_name:32s} \"{title}\"")
+        suffix = f"  + {len(attachments)} diagram(s)" if attachments else ""
+        print(f"  {source_label:36s} -> pages/{out_name:32s}{suffix}")
 
     MANIFEST_PATH.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    print(f"\nWrote {len(manifest)} pages and manifest to {MANIFEST_PATH.name}")
+    print(
+        f"\nWrote {len(manifest)} pages, rendered {total_diagrams} diagrams "
+        f"to diagrams/, manifest at {MANIFEST_PATH.name}"
+    )
     return 0
 
 

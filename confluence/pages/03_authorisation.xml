@@ -7,33 +7,7 @@
 <p><strong>API keys</strong> — opaque tokens issued by the platform itself, stored as SHA-256 hashes in a DynamoDB <code>api-keys</code> table. Each key has an owner (a user or a platform group), an active flag, an optional description, and an issuance timestamp. The raw key is returned only at issuance; the platform stores only the hash.</p>
 <p>Anonymous access is supported for explicitly-public resources (see "Public access" below). Requests with no credential are not rejected at the authoriser; they are resolved to an anonymous identity with access only to public datasets.</p>
 <h1>Three-tier permission model</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    subgraph IdP["Identity Provider"]
-        IDG["IdP groups<br/>(in JWT claims)"]
-    end
-
-    subgraph Ceiling["Ceiling Tier"]
-        CEIL["Per-IdP-group:<br/>role_ceiling<br/>scope_ceiling"]
-    end
-
-    subgraph Platform["Platform Tier"]
-        PG["Platform groups"]
-        MEM["User memberships<br/>(role per group)"]
-        DS["Group → datasets"]
-        CL["Group claims"]
-    end
-
-    subgraph Effective["Effective"]
-        ROLE["Effective role<br/>= max(grants) ∩ ceiling"]
-        SCOPE["Effective scope<br/>= ceiling"]
-        DSET["Accessible datasets<br/>= union of group datasets + public"]
-        CLAIMS["Effective claims<br/>= JWT claims + group claims (RLS)"]
-    end
-
-    IDG --> CEIL --> ROLE
-    PG --> MEM --> ROLE
-    PG --> DS --> DSET
-    PG --> CL --> CLAIMS]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="03_authorisation-mermaid-1.png"/></ac:image></p>
 <h2>Tier 1: Ceiling (from the identity provider)</h2>
 <p>Each IdP group the user belongs to maps to a <strong>ceiling</strong> — the maximum role and scope that anyone in that group may receive, regardless of how generously they are granted permissions inside the platform.</p>
 <table><tbody><tr><th>Ceiling field</th><th>Meaning</th></tr><tr><td><code>role_ceiling</code></td><td>The highest role the user may exercise (e.g. <code>data_manager</code>). Inside the platform, no grant may exceed this.</td></tr><tr><td><code>scope_ceiling</code></td><td>The highest scope the user may exercise (e.g. <code>partner</code>, <code>internal</code>). Limits the visibility category of data.</td></tr></tbody></table>
@@ -83,30 +57,7 @@
 <p>``<code> POST /rest/auth/groups/yarra-ranges/datasets  { "dataset_id": "property_view" } POST /rest/auth/groups/casey/datasets         { "dataset_id": "property_view" } </code>``</p>
 <p>All councils have access to <code>property_view</code>, but they will see different rows.</p>
 <ol><li><strong>Council staff are invited or self-onboard via the IdP.</strong> On first sign-in the post-authentication Lambda converts the invitation into a membership in the appropriate council group.</li><li><strong>At query time:</strong> a Yarra Ranges user requests <code>/features/v1/collections/property_view/items</code>. The Lambda authoriser merges group claims into the effective claims, sees <code>council_id=yarra-ranges</code>, looks up the dataset's RLS rule, and includes it in the permission context as part of <code>X-Auth-User-Claims</code>. The OGC Features API translates the RLS rule into a DuckDB <code>WHERE council_id = 'yarra-ranges'</code> clause appended to the partition-pruned query. The user receives only Yarra Ranges rows.</li><li><strong>A staff member who belongs to multiple councils</strong> (a regional officer assigned to several groups) gets a multi-value claim: <code>council_id=["yarra-ranges","casey"]</code>. The OGC Features API uses an <code>IN</code> predicate, returning rows from both councils.</li></ol>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant DM as Data manager
-    participant POL as Policy API (Lambda)
-    participant DDB as DynamoDB
-    participant USER as Council staff
-    participant AZ as Lambda Authoriser
-    participant API as OGC Features API
-    participant S3
-
-    DM->>POL: POST /rest/auth/datasets/property_view/rls<br/>(column council_id, claim council_id, eq)
-    POL->>DDB: PutItem DATASET#property_view / RLS#council_id
-    DM->>POL: POST /rest/auth/groups (Yarra Ranges,<br/>claims: council_id=yarra-ranges)
-    POL->>DDB: PutItem GROUP#yarra-ranges / META
-    DM->>POL: POST /rest/auth/groups/yarra-ranges/datasets<br/>(property_view)
-    POL->>DDB: PutItem GROUP#yarra-ranges / DATASET#property_view
-    Note over USER,API: Later — a council user queries the dataset
-    USER->>AZ: Bearer JWT (Yarra Ranges group member)
-    AZ->>DDB: Query CEILING, MEMBER, GROUP claims, RLS
-    DDB-->>AZ: claims={council_id:yarra-ranges},<br/>rls={council_id eq council_id}
-    AZ-->>API: X-Auth-User-Datasets, X-Auth-User-Claims
-    API->>S3: SELECT ... WHERE council_id='yarra-ranges'<br/>+ DISTINCT ON (id)
-    S3-->>API: Filtered partitions
-    API-->>USER: Only Yarra Ranges rows]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="03_authorisation-mermaid-2.png"/></ac:image></p>
 <p><strong>Operators supported on RLS rules:</strong> <code>eq</code> (exact match), <code>in</code> (multi-value match — useful when a single user belongs to multiple groups with the same claim key), <code>contains</code> (substring — useful for hierarchical identifiers).</p>
 <p><strong>A note on vector tiles.</strong> RLS applies to the OGC Features API (and to the query layer where deployed). Vector tiles cannot be filtered per-row at the tile layer — PMTiles is byte-served and the server cannot evaluate predicates. If a dataset must be tightly row-restricted, expose it through OGC Features only, not as a vector tile layer. For datasets where row visibility differs only by category (not by tenant), build separate tile layers per category instead.</p>
 <h1>Public access</h1>
@@ -119,23 +70,7 @@
 <ul><li>Headers are set by API Gateway from the authoriser's response. Clients cannot inject them — the gateway's parameter mapping is the only path through which <code>X-Auth-*</code> headers reach the ALB; any client-supplied <code>X-Auth-*</code> is ignored.</li><li>The internal ALB is in private subnets with a security group that allows ingress only from the VPC Link security group. Backends are not reachable from the public internet.</li><li>If the authoriser returns <code>isAuthorized: false</code>, API Gateway returns 401/403 directly and the ALB is never invoked.</li><li>If a backend receives a request <em>without</em> <code>X-Auth-User-Role</code>, it must treat the request as anonymous (fail-closed for writes; restrict reads to public datasets). This is the defence in depth for the rare case of a misconfigured route.</li></ul>
 <p>The API Gateway HTTP API authoriser result cache is <strong>disabled</strong> (TTL=0). Every request invokes the Lambda; per-Lambda-container LRU caching (described below) is what saves DynamoDB capacity. This is deliberate: the gateway's authoriser cache cannot be invalidated programmatically.</p>
 <h1>What happens inside the authoriser</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart TB
-    REQ["Incoming request<br/>Authorization or X-Api-Key"] --> HASH["SHA-256 hash of credential<br/>(used as cache key)"]
-    HASH --> WARM{"Warm LRU cache hit?<br/>(60s TTL, allow only)"}
-    WARM -->|hit| CTX["Cached permission context"]
-    WARM -->|miss| VAL["Validate credential<br/>(JWT signature + expiry,<br/>or api-keys lookup)"]
-    VAL --> PAR["Parallel DynamoDB Query"]
-    PAR --> Q1[("Ceiling<br/>CEILING#idp_group")]
-    PAR --> Q2[("Memberships<br/>MEMBER#user")]
-    PAR --> Q3[("Group datasets<br/>GROUP#g → DATASET#*")]
-    PAR --> Q4[("Group claims<br/>GROUP#g META")]
-    PAR --> Q5[("RLS config<br/>DATASET#d → RLS#*")]
-    Q1 & Q2 & Q3 & Q4 & Q5 --> ASM["Assemble effective permission<br/>role = max(grants) ∩ ceiling<br/>datasets = union(group datasets) + public<br/>claims = JWT ∪ group claims"]
-    ASM --> CACHE["Populate caches<br/>(allow only)"]
-    CACHE --> CTX
-    CTX --> RESP["Return isAuthorized + context<br/>to API Gateway"]
-    RESP --> MAP["API Gateway parameter mapping<br/>→ X-Auth-User-Id<br/>→ X-Auth-User-Role<br/>→ X-Auth-User-Datasets<br/>→ X-Auth-User-Claims<br/>→ ..."]
-    MAP --> BACK["Forward to backend over VPC Link"]]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="03_authorisation-mermaid-3.png"/></ac:image></p>
 <ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the authoriser turns a credential into a permission decision and a set of headers, in parallel rather than serially, so a request without a warm cache still completes in tens of milliseconds.</p></ac:rich-text-body></ac:structured-macro>
 <h1>Caching</h1>
 <p>Two layers of caching inside the authoriser Lambda, with deliberate TTLs:</p>

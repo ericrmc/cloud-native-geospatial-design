@@ -4,95 +4,16 @@
 <blockquote><p><em>Why this was built rather than adopted.</em> No standards-compliant OGC stack at the time of this design provided object-store-resident GeoJSON / GeoParquet feature editing with validation, review gates, and audit history in the form needed. <a href="https://pygeoapi.io/">pygeoapi</a> covers the read side but did not (then) implement transactions for object-store providers; <a href="https://geoserver.org/">GeoServer</a>'s WFS-T requires a database; <a href="https://developmentseed.org/tipg/">tipg</a> is read-only. The editing pipeline below fills that gap. See <ac:link><ri:page ri:content-title="15 — Design Decisions"/><ac:plain-text-link-body><![CDATA[Peer stacks and prior art]]></ac:plain-text-link-body></ac:link> in <ac:link><ri:page ri:content-title="15 — Design Decisions"/><ac:plain-text-link-body><![CDATA[16 Design Decisions]]></ac:plain-text-link-body></ac:link> for the wider landscape.</p></blockquote>
 <blockquote><p><strong>Prior iteration.</strong> An earlier version of the pipeline had no edit sessions and no per-dataset queueing: each upload triggered an independent pipeline run, which meant two near-simultaneous edits to the same dataset could overlap their partition writes and produce corrupted source GeoParquet. The session model, the state machine, and the per-dataset concurrency limit (one active job, others queued) were introduced as a single piece of work after that class of corruption was observed. The reviewed-editing variant with delta and difference PMTiles arrived shortly after, in response to a need for human approval before cadastral data was promoted to live.</p></blockquote>
 <h1>The lifecycle, top to bottom</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart TB
-    A[Editor opens edit session] --> B[Editor uploads data]
-    B --> C[Editor finalises session]
-    C --> D{Per-dataset<br/>concurrency check}
-    D -->|other job active| Q[Queue]
-    D -->|clear| V[Validation task]
-    Q -.->|dequeue when prior job<br/>completes| V
-    V --> VS{Validation<br/>severity}
-    VS -->|errors| F[Mark failed]
-    VS -->|pass / warnings| G[Generation task]
-    G --> RR{Review<br/>required?}
-    RR -->|yes| R[Park as awaiting review]
-    RR -->|no| P[Promotion function]
-    R --> H[Reviewer approves]
-    H --> G2[Final generation if needed]
-    G2 --> P
-    P --> DONE[Live]
-    P --> HIS[Append SCD2 history]
-    P --> EVT[Append event log]
-    P --> NEXT[Dequeue next queued job]]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="11_editing_pipeline-mermaid-1.png"/></ac:image></p>
 <h1>End-to-end edit journey</h1>
 <p>The same flow, drawn against a time axis with AWS participants — from an editor's first click to a fresh tile arriving in a colleague's browser:</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant Editor
-    participant CF as CloudFront
-    participant GW as API Gateway
-    participant EDIT as Editing API (Lambda)
-    participant S3
-    participant SQS as SQS trigger (Lambda)
-    participant SFN as Step Functions
-    participant VAL as Validation task (Fargate)
-    participant GEN as Generation task (Fargate)
-    participant PROMO as Promotion (Lambda)
-    participant VTS as go-pmtiles (Fargate)
-    participant Viewer
-
-    Editor->>GW: POST /edit-sessions {dataset_id}
-    GW->>EDIT: Authorised request
-    EDIT-->>Editor: session_id
-    Editor->>GW: POST /edit-sessions/{id}/uploads
-    GW->>EDIT: Authorised request
-    EDIT-->>Editor: S3 presigned PUT URL
-    Editor->>S3: PUT landing/{dataset}/{job}/data.fgb
-    Editor->>GW: POST /edit-sessions/{id}/finalize
-    GW->>EDIT: Authorised request
-    EDIT->>S3: (object-created event already queued)
-    S3-->>SQS: ObjectCreated event
-    SQS->>SFN: StartExecution
-    SFN->>VAL: RunTask (DuckDB checks)
-    VAL->>S3: Read landing/, write drafts/checks/results.json
-    VAL-->>SFN: pass / warnings
-    SFN->>GEN: RunTask (Tippecanoe)
-    GEN->>S3: Read source/, write pmtiles/staging/{dataset}.pmtiles
-    GEN->>S3: Write drafts/{session}/delta.pmtiles + diff.pmtiles
-    GEN-->>SFN: artefacts ready
-    Note over SFN: (For reviewed datasets,<br/>park here until approval.)
-    SFN->>PROMO: Invoke
-    PROMO->>S3: CopyObject staging → pmtiles/{dataset}.pmtiles (atomic)
-    PROMO->>CF: CreateInvalidation /tiles/vector/{dataset}/*
-    PROMO->>S3: Append history/ + metadata/dataset_events/
-    PROMO-->>SFN: complete
-    Viewer->>CF: GET tile (z/x/y)
-    CF->>VTS: Cache miss after invalidation
-    VTS->>S3: Byte-range read (new ETag)
-    VTS-->>CF: Fresh tile bytes
-    CF-->>Viewer: Fresh tile]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="11_editing_pipeline-mermaid-2.png"/></ac:image></p>
 <ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the editor's HTTP work is short and synchronous; everything heavy happens behind a job identifier the editor can poll. From the viewer's perspective, the swap looks like the tile just changed on the next refresh.</p></ac:rich-text-body></ac:structured-macro>
 <h1>Components</h1>
 <p>The pipeline is composed of small services with well-defined responsibilities:</p>
 <table><tbody><tr><th>Component</th><th>AWS substrate</th><th>Role</th></tr><tr><td><strong>Editing API</strong></td><td>Lambda</td><td>User-facing write endpoints — manages edit sessions, generates S3 presigned upload URLs, handles finalisation, accepts reviewer approvals, and manages validation rules.</td></tr><tr><td><strong>Upload gate</strong></td><td>Lambda</td><td>Lightweight authorisation check for direct bulk uploads (non-session edits), returning S3 presigned URLs.</td></tr><tr><td><strong>SQS trigger</strong></td><td>Lambda</td><td>Bridges S3 <code>landing/</code> object-created events (delivered via SQS) into <code>StartExecution</code> calls on the Step Functions state machine.</td></tr><tr><td><strong>State machine</strong></td><td>Step Functions</td><td>Orchestrates validation → generation → promotion. Retry policies with exponential backoff cover transient <code>EcsAmazonECSException</code> and <code>States.Timeout</code> errors. Catch blocks route to the failure handler.</td></tr><tr><td><strong>Validation task</strong></td><td>Fargate transient ECS task</td><td>Runs DuckDB schema, geometry, and user-defined SQL checks against an uploaded dataset. 4 vCPU, 16 GB, 100 GiB ephemeral storage.</td></tr><tr><td><strong>Generation task</strong></td><td>Fargate transient ECS task</td><td>Produces serving artefacts: full or incremental PMTiles via Tippecanoe, plus delta and difference PMTiles for review. 4 vCPU, 16 GB, 200 GiB ephemeral storage.</td></tr><tr><td><strong>Promotion function</strong></td><td>Lambda</td><td>Atomically swaps staging artefacts into live via S3 <code>CopyObject</code>; issues a CloudFront invalidation; writes SCD2 history and event-log entries; dequeues the next queued job.</td></tr><tr><td><strong>Failure handler</strong></td><td>Lambda</td><td>Step Functions catch target. Marks job and dataset as failed, releases the per-dataset queue.</td></tr><tr><td><strong>Job API</strong></td><td>Lambda</td><td>Read-only view of job state for clients tracking pipeline progress; honours dataset access from the auth context.</td></tr><tr><td><strong>SQL edit executor</strong></td><td>Lambda (3 GiB, 15-minute timeout)</td><td>Performs bulk data corrections via DuckDB SQL, routed through the validation pipeline.</td></tr><tr><td><strong>History vacuum</strong></td><td>Lambda, EventBridge-scheduled</td><td>Compacts per-job SCD2 history files into monthly archives.</td></tr><tr><td><strong>Event log compactor</strong></td><td>Lambda, EventBridge-scheduled</td><td>Compacts per-job event-log files into monthly archives.</td></tr></tbody></table>
 <h1>Edit session state machine</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[stateDiagram-v2
-    [*] --> draft: create session
-    draft --> uploading: request presigned URL
-    uploading --> submitted: finalise
-    submitted --> validating: workflow engine starts
-    validating --> reviewing: review_required and validation passes
-    validating --> approved: not review_required and validation passes
-    validating --> failed: validation errors
-    reviewing --> approved: reviewer approves
-    reviewing --> rejected: reviewer rejects
-    approved --> promoting: promotion function invoked
-    promoting --> promoted: atomic swap complete
-    promoting --> failed: promotion error
-    failed --> uploading: retry
-    promoted --> [*]
-    rejected --> [*]
-    cancelled --> [*]]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="11_editing_pipeline-mermaid-3.png"/></ac:image></p>
 <p>State transitions are guarded by optimistic locking (a version counter on the session) so that concurrent operations cannot leave the session in an inconsistent state. The state machine is enforced by the editing API; the workflow engine writes state transitions only through the editing API's interfaces, never directly to the store.</p>
 <h1>Per-dataset concurrency</h1>
 <p>Only one pipeline job may be active for a given dataset at a time. This prevents:</p>
@@ -170,40 +91,7 @@
 <p>``<code> PATCH /rest/datasets/parcels/schema/fields/council_id { "type": "string", "required": true, "description": "Local government area identifier" } </code>``</p>
 <p>The breaking-change detector runs again, finds the data is now compatible (no null values in the column), and applies the schema update. The dataset's JSON Schema in DynamoDB is updated; future edits will be validated against the new requirement.</p>
 <ol><li><strong>The change propagates.</strong> The next edit submitted to <code>parcels</code> is validated against the new schema. An attempt to submit a feature without <code>council_id</code> is rejected at validation, with a clear error pointing at the offending feature.</li></ol>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant DM as Data manager
-    participant POL as Policy API (Lambda)
-    participant DDB as DynamoDB
-    participant SQE as SQL Edit Executor (Lambda)
-    participant SFN as Step Functions
-    participant VAL as Validation task
-    participant GEN as Generation task
-    participant PROMO as Promotion Lambda
-    participant S3
-
-    DM->>POL: PATCH /rest/datasets/parcels/schema/fields/council_id<br/>(required: true)
-    POL->>DDB: GetItem current schema
-    POL->>POL: Compare old vs new<br/>(detect: field_made_required)
-    POL-->>DM: HTTP 400 + suggested SQL migration
-    DM->>SQE: POST /rest/datasets/parcels/sql-edit<br/>(dry_run: true)
-    SQE->>S3: Read source/parcels + source/councils partitions
-    SQE-->>DM: affected_rows: 412034, sample
-    DM->>SQE: POST /rest/datasets/parcels/sql-edit<br/>(dry_run: false)
-    SQE->>S3: Write drafts/parcels/sql-edit-XYZ/
-    SQE->>SFN: StartExecution (validation + generation + promotion)
-    SFN->>VAL: Validate session
-    VAL->>S3: Write source/parcels new partitions
-    SFN->>GEN: Regenerate PMTiles
-    GEN->>S3: Write pmtiles/staging/parcels.pmtiles
-    SFN->>PROMO: Promote
-    PROMO->>S3: CopyObject staging → live
-    PROMO->>DDB: Job complete
-    DM->>POL: PATCH /rest/datasets/parcels/schema/fields/council_id (retry)
-    POL->>DDB: GetItem (data now has council_id everywhere)
-    POL->>POL: No breaking changes detected
-    POL->>DDB: Update schema
-    POL-->>DM: HTTP 200 — schema applied]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="11_editing_pipeline-mermaid-4.png"/></ac:image></p>
 <p><strong>The escape hatch.</strong> A data manager who <em>knows</em> the data is already compatible (for example, the dataset was populated by an external process that has been writing the new column for a week) can pass <code>force: true</code> on the schema PATCH to skip the detector. The detector is a guardrail, not a gate.</p>
 <p><strong>Other breaking-change categories</strong> the detector handles the same way: field deletion (suggest a <code>SELECT * EXCEPT(col)</code> migration), type change (suggest a <code>CAST</code>), enum reduction (suggest a value remap), constraint tightening (suggest a filter), <code>additionalProperties</code> restriction (suggest column pruning).</p>
 <h1>Row-level history (SCD2)</h1>

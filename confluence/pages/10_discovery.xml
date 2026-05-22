@@ -48,50 +48,7 @@
 <p>``<code>graphql query { reach: isochrone(point: {lon: 144.8, lat: -37.8}, costing: "auto", time_minutes: 15) { geometry } parcels: searchFeatures( dataset: "parcels", geometryFilter: { fromQuery: "reach" }, predicate: WITHIN ) { id geometry properties } } </code>``</p>
 <p>The query layer computes the isochrone via the routing engine, uses the resulting geometry to filter parcels via DuckDB spatial, and returns both results in a single response. Buffer, union, dissolve, intersect, simplify, centroid, convex hull, distance, point-in-polygon, and the routing operations are all designed as <strong>thin GraphQL resolvers over DuckDB spatial functions and the routing engine</strong>. The underlying functions are well-tested in DuckDB and Valhalla; the resolver wrappers — argument coercion, error handling, batch limits, the cross-engine composition — have not been exercised against real workloads. They are expected to work. They have not been proven to.</p>
 <ol><li><strong>Save a query result as a new dataset.</strong> Designed-but-untested: if the analyst wants the composed result to be reusable, the <code>saveQueryResult</code> mutation writes it as a new GeoParquet dataset under <code>source/</code>, registers it in DynamoDB, and pushes it through the editing pipeline so tiles are generated. Within a minute or two the saved query becomes a first-class dataset, discoverable through STAC. This stitches the query layer into the editing pipeline; both halves work in isolation, but the seam has not been load-tested.</li></ol>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant U as Analyst
-    participant STAC as STAC API (Lambda)
-    participant DDB as DynamoDB
-    participant FEAT as OGC Features (Lambda)
-    participant QL as Query layer (Fargate, GraphQL)
-    participant VAL as Valhalla
-    participant S3
-
-    U->>STAC: GET /stac/collections
-    STAC->>DDB: Scan datasets (filtered by X-Auth-User-Datasets)
-    DDB-->>STAC: Accessible collections
-    STAC-->>U: Catalogue list
-    U->>STAC: GET /stac/search?bbox=…&datetime=…
-    STAC-->>U: Matching collections
-    U->>STAC: GET /stac/collections/parcels
-    STAC-->>U: Schema, extent, links
-
-    Note over U,QL: Validated path — simple queries (REST or direct GraphQL)
-    alt REST entry
-        U->>FEAT: GET /features/v1/collections/parcels/items?bbox=…
-        FEAT->>QL: searchFeatures(dataset, bbox, limit)
-    else Direct GraphQL entry
-        U->>QL: POST /graphql { searchFeatures(...) }
-    end
-    QL->>S3: DuckDB read source/parcels (bbox-pruned, RLS-filtered, DISTINCT ON id)
-    S3-->>QL: Rows
-    QL-->>U: Features (GeoJSON via FEAT, or typed via direct GraphQL)
-
-    Note over U,VAL: Designed-but-untested path — spatial-analysis composition
-    opt Compose with spatial ops
-        U->>QL: POST /graphql (isochrone + searchFeatures WITHIN)
-        QL->>VAL: isochrone(point, time)
-        VAL-->>QL: Polygon
-        QL->>S3: DuckDB ST_Within(parcels, isochrone)
-        S3-->>QL: Rows
-        QL-->>U: Composed result
-    end
-    opt Save result for reuse
-        U->>QL: mutation saveQueryResult(...)
-        QL->>S3: Write source/{new_dataset}/...
-        QL->>DDB: Register dataset, trigger pipeline
-    end]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="10_discovery-mermaid-1.png"/></ac:image></p>
 <h2>Aspirational front-end patterns built on the query layer</h2>
 <p>The query layer is intended to support interactive workflows that the OGC surface cannot. Two patterns worth investigating in a future front-end build:</p>
 <ul><li><strong>Chained queries.</strong> The web map viewer composes a workflow as a directed graph of GraphQL queries, each step feeding the next: <em>compute isochrones from these points → union them → intersect with property boundaries → render as a new overlay</em>. The user sees intermediate results progressively and can branch from any step. This is more powerful than a single saved query because the intermediate steps are inspectable and adjustable.</li><li><strong>Persisted user workspaces as tabs.</strong> Each tab in the viewer holds a named query (or a chain) with its parameters. Closing the browser preserves the tabs server-side via the <strong>view definitions</strong> primitive described in <ac:link><ri:page ri:content-title="07 — Query Layer"/><ac:plain-text-link-body><![CDATA[07 Query Layer]]></ac:plain-text-link-body></ac:link>; the user picks up where they left off. Tabs can be shared with colleagues by URL, with parameters bound to context variables that the recipient resolves to their own values (e.g. "their council" rather than the originator's).</li></ul>
@@ -123,20 +80,7 @@
 <p>The Policy API applies an <strong>S3 Lifecycle transition</strong> to the dataset's prefixes (<code>source/roads-2024/</code>, <code>pmtiles/roads-2024.pmtiles</code>, <code>history/roads-2024/</code>) moving the objects to <strong>S3 Glacier Deep Archive</strong>. The DynamoDB registry entry remains as a tombstone — the dataset's metadata, lineage, schema, and event log are still queryable by admins for audit. The 410 Gone response continues to be returned for data requests.</p>
 <p>Restoring from Glacier Deep Archive takes 12–48 hours and incurs retrieval cost. The expectation is that archived datasets are restored only for compliance review, not for resumed serving.</p>
 <ol><li><strong>(Optional) Full deletion.</strong> Truly final removal — DynamoDB entry deleted, S3 objects deleted — is supported but reserved for cases with explicit legal or contractual need. The operation is <code>DELETE /rest/datasets/{id}?confirm=true&amp;include_data=true</code>. The deletion writes a final event-log entry recording who deleted what, when, and why; the event log itself is retained.</li></ol>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[stateDiagram-v2
-    [*] --> Active: register
-    Active --> Deprecated: PUT metadata.deprecated=true,<br/>successor=...
-    Deprecated --> Active: PUT metadata.deprecated=false<br/>(undo, rarely)
-    Deprecated --> Retired: PUT active=false
-    Active --> Retired: PUT active=false<br/>(skip deprecation, urgent)
-    Retired --> Archived: PUT metadata.archived=true<br/>(S3 lifecycle to Glacier)
-    Archived --> Deleted: DELETE ?confirm=true&include_data=true<br/>(rarely)
-    Deleted --> [*]
-
-    note right of Active: Listed, full access
-    note right of Deprecated: Listed with notice, full access
-    note right of Retired: Not listed, 410 Gone
-    note right of Archived: Not listed, 410 Gone,<br/>data in Glacier]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="10_discovery-mermaid-2.png"/></ac:image></p>
 <p><strong>Why state transitions instead of deletion.</strong> Each transition is observable in the catalogue and in the dataset event log. A client that suddenly sees 410 Gone can trace back through the catalogue history to find when the dataset was retired, who retired it, and what the successor is. A silent deletion offers none of this. The lifecycle states also align with common compliance regimes that distinguish "not actively used" from "permanently destroyed."</p>
 <p><strong>Successor relationships.</strong> The <code>metadata.successor</code> field is a soft reference — clients may follow it programmatically but the platform does not auto-redirect requests. Auto-redirection (e.g. HTTP 301 from <code>roads-2024</code> to <code>roads-2026</code>) is deliberately avoided because the successor is rarely a drop-in replacement; clients need to migrate deliberately, not transparently.</p>
 <h1>Limits</h1>
@@ -145,16 +89,7 @@
 <ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> never built, but the pieces happened to fit. A chat box, an LLM agent, and the existing STAC + GraphQL surface would together give users natural-language access to spatial data at scale, without anyone running a database underneath.</p></ac:rich-text-body></ac:structured-macro>
 <p>The query layer's shape — a typed, introspectable GraphQL schema over composable spatial operations — was chosen partly because it composes naturally with another consumer: a language model acting on behalf of a user. The STAC catalogue already describes every dataset in human-readable terms (title, description, keywords, attribution, schema, spatial and temporal extent). The GraphQL schema is introspectable and statically typed. With a chat interface, the path looks like:</p>
 <ol><li><strong>User asks</strong>, in natural language: <em>"show me parcels within a 15-minute drive of any fire station in the western suburbs."</em></li><li><strong>Agent reads STAC</strong> to find candidate datasets — parcels, fire stations — and their schemas, extents, and access constraints.</li><li><strong>Agent introspects the GraphQL schema</strong> — it learns about <code>searchFeatures</code>, <code>isochrone</code>, <code>geometryFilter</code>, the predicate enum, the input modes (point, bbox, dataset+ids).</li><li><strong>Agent generates the GraphQL query</strong>, likely a chain of operations of the same shape the discovery journey shows above.</li><li><strong>The query layer executes</strong> against DuckDB and Valhalla. The user sees the result on the map. The agent narrates what it did and offers refinements.</li></ol>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    USER[User chat] --> AGENT[LLM agent]
-    AGENT -. reads .-> STAC[STAC catalogue<br/>descriptions, schema, extent]
-    AGENT -. introspects .-> SCHEMA[GraphQL schema<br/>typed spatial operations]
-    AGENT -- generated query --> QL[Query layer]
-    QL --> S3[(S3 GeoParquet)]
-    QL --> VAL[Valhalla]
-    QL -- result --> AGENT
-    AGENT -- "answer + map" --> USER
-    AZ[Auth gate] -. scopes every request .-> AGENT]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="10_discovery-mermaid-3.png"/></ac:image></p>
 <p>The architectural property that makes this attractive — and that distinguishes it from a traditional database-backed GIS bolted to a chat surface — is that <strong>there is no connection pool to exhaust, no schema cache to refresh, no per-tenant compute to provision</strong>. Every query is a stateless read against S3 partitions, scaled by the cloud's own elasticity. An agent fanning out fifty exploratory queries to find the right framing is fifty more S3 reads; the cost shape does not change. Global-scale datasets — continental cadastres, planetary imagery indices — are reachable on the same primitives.</p>
 <p>The agent inherits the auth gate by construction. It sends requests with the user's JWT or API key; it cannot reach datasets the user cannot reach; row-level security still filters every response. The agent can be more skilful than a human at composing queries, but no more privileged.</p>
 <p><strong>Was this built?</strong> No. Not even a prototype. The intention shaped the query layer's design — typed, composable, introspectable, no hidden state — but the agent itself was never written, the chat surface was never built, and the connective tissue (retrieving catalogue context efficiently, showing the user the generated query before execution, fan-out guardrails, observability, evaluation harnesses) was not designed.</p>

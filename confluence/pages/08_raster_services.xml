@@ -29,16 +29,7 @@
 <table><tbody><tr><th>Endpoint</th><th>Purpose</th></tr><tr><td><code>GET /coverages/v1/collections</code></td><td>List coverage collections</td></tr><tr><td><code>GET /coverages/v1/collections/{id}/coverage/domainset</code></td><td>Spatial extent and CRS</td></tr><tr><td><code>GET /coverages/v1/collections/{id}/coverage/rangetype</code></td><td>Band information</td></tr><tr><td><code>GET /coverages/v1/collections/{id}/coverage</code></td><td>Fetch coverage (subset by bbox, band)</td></tr><tr><td><code>GET /coverages/v1/collections/{id}/point</code></td><td>Sample a single pixel value</td></tr></tbody></table>
 <p>The Coverages API reads COGs directly via GDAL. It does not pre-render; subsets are computed on demand. Output formats include GeoTIFF, NetCDF, and JSON for point queries.</p>
 <h1>How they fit together</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    QGIS["QGIS / ArcGIS"] -- WMTS/WMS --> WMTS[WMTS proxy]
-    WMTS --> RTS[Raster tile server]
-    Browser["Web map"] -- XYZ --> RTS
-    Script["Script / programmatic"] -- "OGC Coverages" --> COV[Coverages API]
-    Arc["ArcGIS Portal"] -- VectorTileServer --> WMTS
-    RTS --> COG[(COGs in object storage)]
-    COV --> COG
-    RTS --> MOS[(MosaicJSON descriptors)]
-    WMTS -. vector adapter .-> VTS[Vector tile server]]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="08_raster_services-mermaid-1.png"/></ac:image></p>
 <p>The raster tile server and the vector tile server are independent. The WMTS proxy is the unifying layer for desktop GIS; the Coverages API is the unifying layer for programmatic raster access.</p>
 <h1>Ingest — batch processing tooling</h1>
 <p>COGs and MosaicJSON descriptors are produced outside the request path. Imagery typically arrives as raw GeoTIFFs (often thousands of tiles for a statewide aerial dataset) and must be converted, optimised, and indexed before it can be served. The platform expects this pre-processing to be handled by <strong>batch scripts</strong> run from an operator workstation or a one-off EC2 / Fargate task. Four tools cover the common needs.</p>
@@ -72,67 +63,11 @@
 <ol><li><strong>Verify discoverability.</strong> The dataset appears in:</li><li><strong>STAC API</strong> at <code>/stac/collections/aerial-2026</code> with the bbox, time range, and distribution links.</li><li><strong>WMTS GetCapabilities</strong> as a layer with a TIME dimension (if multi-date).</li><li><strong>Raster tile server endpoints</strong> for direct XYZ access (<code>/tiles/raster/aerial-2026/{z}/{x}/{y}.png</code>).</li><li><strong>OGC Coverages API</strong> at <code>/coverages/v1/collections/aerial-2026/coverage</code> for programmatic access to the raster data.</li></ol>
 <p>The dataset-sync Lambda will also have detected the new COGs in S3 on its next scheduled run, but because the data manager registered the dataset manually, the sync finds nothing new and the dataset is <code>active: true</code> from the start (not <code>needs_review: true</code>).</p>
 <ol><li><strong>Clients connect.</strong> QGIS users add a WMTS connection pointing at the WMTS GetCapabilities URL with their API key in the <code>X-Api-Key</code> header; the new layer appears alongside existing ones. ArcGIS users add it via the same WMTS endpoint. The web map viewer references the TileJSON for the raster tile server endpoint. The first request after registration warms the raster tile server's GDAL cache; subsequent requests are fast.</li></ol>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    subgraph Operator["Operator workstation or one-off Fargate task"]
-        TIFS[Raw GeoTIFFs<br/>6000 tiles]
-        CONV["gdal_translate batch<br/>(PARALLEL=8)"]
-        VRT["gdalbuildvrt +<br/>gdal_translate to 1m overview"]
-        MOSGEN["MosaicJSON generator<br/>(quadkey-indexed)"]
-    end
-
-    subgraph S3["S3 spatial-data-bucket"]
-        COGPREFIX[("cogs/aerial-2026/<br/>6000 COGs")]
-        OVERVIEW[("cogs/aerial-2026/_overview.tif")]
-        MOSAIC[("mosaics/aerial-2026.json")]
-    end
-
-    subgraph Registry["Registration"]
-        POL[Policy API]
-        DDB[(DynamoDB datasets table)]
-    end
-
-    subgraph Serving["Live serving"]
-        STAC[STAC API]
-        WMTS[WMTS proxy]
-        RTS[Raster tile server]
-        COV[Coverages API]
-    end
-
-    subgraph Clients["Clients"]
-        QGIS[QGIS / ArcGIS]
-        WEB[Web map viewer]
-        SCRIPT[Programmatic]
-    end
-
-    TIFS --> CONV --> COGPREFIX
-    COGPREFIX --> VRT --> OVERVIEW
-    COGPREFIX --> MOSGEN --> MOSAIC
-    Operator -- "POST /rest/datasets<br/>(data_type: raster,<br/>distributions, render)" --> POL
-    POL --> DDB
-    DDB --> STAC & WMTS & RTS & COV
-    COGPREFIX --> RTS
-    OVERVIEW --> RTS
-    MOSAIC --> RTS
-    COGPREFIX --> COV
-    WMTS -. proxies .-> RTS
-    QGIS -- WMTS --> WMTS
-    WEB -- XYZ --> RTS
-    SCRIPT -- "OGC Coverages" --> COV]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="08_raster_services-mermaid-2.png"/></ac:image></p>
 <p><strong>Time-series variant.</strong> When the same area is captured monthly or annually, each capture date is processed independently and produces its own MosaicJSON: <code>aerial-2026-01.json</code>, <code>aerial-2026-02.json</code>, … The dataset registration is updated to list all the dates in <code>metadata.time_dimension.values</code>, and the WMTS proxy surfaces a TIME parameter. Clients pass <code>TIME=2026-01-15</code> (or equivalent) to fetch tiles from the appropriate mosaic.</p>
 <p><strong>Re-running parts of the pipeline.</strong> If a small number of source TIFs are re-delivered (e.g. corrections to a few tiles), the operator re-runs the COG conversion for those filenames only (<code>--single</code> mode), uploading replacements to <code>cogs/aerial-2026/</code>. The MosaicJSON does not need rebuilding because filenames are stable. The next request to a covered tile reads the replacement COG; no service restart is needed. If new tiles are added (extending coverage), the MosaicJSON is rebuilt and re-uploaded.</p>
 <p>The four steps, in flow:</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    SRC[("Source bucket<br/>raw GeoTIFFs")] --> P1["1) Parallel gdal_translate<br/>(COG driver, 4–8 workers,<br/>resumable, skip-existing)"]
-    P1 --> S3C[("cogs/<br/>COGs in S3")]
-    S3C --> P2["2) Overview / pyramid mosaic<br/>(gdalbuildvrt → gdal_translate)"]
-    P2 --> S3C
-    S3C --> P3["3) MosaicJSON construction<br/>(grid-encoded names or<br/>cogeo-mosaic library)"]
-    P3 --> S3M[("mosaics/<br/>MosaicJSON")]
-    S3C & S3M --> P4["4) Dataset registration<br/>(POST /rest/datasets)"]
-    P4 --> DDB[(DynamoDB datasets table)]
-    DDB --> SERVE["Live serving<br/>(TiTiler, WMTS proxy, Coverages)"]
-    S3C --> SERVE
-    S3M --> SERVE]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="08_raster_services-mermaid-3.png"/></ac:image></p>
 <ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> each step is a one-shot batch with a clear input and output; an operator can pause after any step, inspect the result, and resume.</p></ac:rich-text-body></ac:structured-macro>
 <h1>What this serves well</h1>
 <ul><li>Time-series imagery (aerial photography, satellite data) where users want to specify a date and get a tile.</li><li>Elevation and bathymetry layers served as both rendered tiles and queryable coverages.</li><li>Multi-source mosaics (e.g. statewide imagery composed of hundreds of tiles).</li><li>Mixed clients: web maps via XYZ, QGIS/ArcGIS via WMTS, programmatic clients via Coverages.</li></ul>

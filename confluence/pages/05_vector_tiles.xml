@@ -15,26 +15,7 @@
 <p>S3 <code>CopyObject</code> within a bucket is atomic from the consumer's perspective. The object's URL either serves the previous file or the new file — never a partial mix — and the change is reflected in the object's ETag.</p>
 <p>The go-pmtiles server observes the new ETag on its next access, invalidates its directory cache for that dataset, and serves the new tiles. No restart or deployment is needed.</p>
 <p>A <strong>CloudFront invalidation</strong> for <code>/tiles/vector/{dataset}/*</code> is issued by the promotion Lambda as part of the same step, evicting pre-swap tiles cached at the edge.</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant GEN as Generation task
-    participant S3 as S3
-    participant PROMO as Promotion Lambda
-    participant TILE as go-pmtiles<br/>(Fargate)
-    participant CF as CloudFront
-    participant CLIENT as Map client
-
-    GEN->>S3: PUT pmtiles/staging/{dataset}.pmtiles
-    PROMO->>S3: CopyObject staging → live (atomic, new ETag)
-    PROMO->>CF: CreateInvalidation /tiles/vector/{dataset}/*
-    CLIENT->>CF: GET tile (z/x/y)
-    CF->>TILE: Cache miss after invalidation
-    TILE->>S3: HEAD live PMTiles (ETag changed)
-    TILE->>TILE: Invalidate cached directory, re-read header
-    TILE->>S3: Byte-range read for tile
-    S3-->>TILE: Tile bytes
-    TILE-->>CF: Tile bytes
-    CF-->>CLIENT: Tile bytes (cached at edge)]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="05_vector_tiles-mermaid-1.png"/></ac:image></p>
 <ac:structured-macro ac:name="info"><ac:rich-text-body><p><strong>In plain terms.</strong> the swap is the moment of truth — the file is exchanged atomically, the edge cache is invalidated, and the tile server picks up the new ETag on its very next read. There is no restart, no deployment, and no half-served version.</p></ac:rich-text-body></ac:structured-macro>
 <h1>Draft tiles for reviewed editing</h1>
 <p>When a dataset has the reviewed-editing flag set, the generation task additionally produces two smaller PMTiles per edit session:</p>

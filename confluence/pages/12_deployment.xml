@@ -12,45 +12,13 @@
 <p>Each service group is configured by a scaling mode. Three modes are defined:</p>
 <table><tbody><tr><th>Mode</th><th>Behaviour</th></tr><tr><td><code>off</code></td><td>Zero running tasks. Services scale up only on first request. Cost approaches zero.</td></tr><tr><td><code>minimal</code></td><td>One or two tasks per service. Steady-state low cost; first request after idle scales further if needed.</td></tr><tr><td><code>performance</code></td><td>Multiple pre-warmed tasks, higher CPU and memory allocations. Consistent low-latency response; higher cost.</td></tr></tbody></table>
 <p>The mode is a deployment parameter. Different environments typically run in different modes (<code>dev</code> in minimal, <code>prod</code> in performance). The mode is independent of which service groups are deployed.</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    subgraph dev["Dev environment"]
-        D1["All service groups"]
-        D2["minimal scaling"]
-    end
-    subgraph test["Test environment"]
-        T1["Stable service groups"]
-        T2["minimal scaling"]
-    end
-    subgraph prod["Prod environment"]
-        P1["Proven service groups"]
-        P2["performance scaling"]
-    end]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="12_deployment-mermaid-1.png"/></ac:image></p>
 <h1>Compute split: Fargate vs Lambda</h1>
 <p>Services are placed on <strong>Fargate</strong> (long-running ECS services or transient ECS tasks) or <strong>Lambda</strong> based on workload characteristics:</p>
 <table><tbody><tr><th>Workload</th><th>Compute</th><th>Rationale</th></tr><tr><td>Heavy data engines (DuckDB, GDAL, Tippecanoe, routing graphs)</td><td>Fargate service</td><td>Long warm-up, persistent caches, large memory footprint</td></tr><tr><td>Tile servers (vector via go-pmtiles, raster via TiTiler)</td><td>Fargate service</td><td>Benefit from warm caches; scale-to-zero supported via desired-count 0</td></tr><tr><td>OGC API Features (standalone shape)</td><td>Lambda</td><td>Thin handler, fast cold start, pay-per-request</td></tr><tr><td>OGC API Features (façade shape)</td><td>Lambda</td><td>Same — the work is in the Fargate query layer</td></tr><tr><td>Authoriser</td><td>Lambda</td><td>Tiny stateless logic; latency-critical</td></tr><tr><td>STAC API</td><td>Lambda</td><td>Read-only over DynamoDB</td></tr><tr><td>Editing API, Upload gate, Job API</td><td>Lambda</td><td>HTTP handlers over DynamoDB</td></tr><tr><td>Promotion function, failure handler</td><td>Lambda</td><td>Step Functions task targets; short execution</td></tr><tr><td>Validation task, generation task</td><td>Fargate transient ECS task</td><td>Long-running computation with large ephemeral storage (100–200 GiB)</td></tr><tr><td>Dataset sync, history vacuum, event log compactor</td><td>Lambda (EventBridge-scheduled)</td><td>Periodic maintenance</td></tr></tbody></table>
 <p><strong>Fargate tasks vs Fargate services.</strong> Transient ECS tasks (started by <code>RunTask</code> from Step Functions for one job, then exit) are distinct from long-running ECS services (managed by ECS Service Auto Scaling, kept warm at the configured desired count). The validation and generation steps use tasks; everything else on Fargate uses services.</p>
 <h1>Network shape</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart TB
-    INET[Internet]
-    CF[CloudFront]
-    APIGW[API Gateway HTTP API]
-    AZ[Lambda Authoriser]
-    VPCL[VPC Link]
-    subgraph VPC["Private VPC"]
-        ALB[Internal ALB]
-        ECS["Fargate tasks & services<br/>(private subnets)"]
-        FN["Lambda functions<br/>(ALB-integrated)"]
-        DDB[(DynamoDB VPC endpoint)]
-        S3EP[(S3 Gateway endpoint)]
-    end
-
-    INET --> CF --> APIGW
-    APIGW --> AZ
-    APIGW --> VPCL --> ALB
-    ALB --> ECS
-    ALB --> FN
-    ECS --> DDB & S3EP
-    AZ --> DDB]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="12_deployment-mermaid-2.png"/></ac:image></p>
 <p>The internal ALB is <strong>not internet-facing</strong> — it sits in private subnets with a security group that allows ingress only from the <strong>VPC Link</strong> security group. The only ingress to backends is through the API Gateway HTTP API via the VPC Link private integration. This:</p>
 <ul><li>Prevents requests from bypassing the Lambda authoriser.</li><li>Removes the need for per-backend authentication code.</li><li>Reduces the public attack surface to a single component (the API Gateway).</li></ul>
 <blockquote><p><strong>Prior iteration.</strong> The ALB was once <strong>internet-facing</strong>, in public subnets. All traffic was <em>supposed</em> to go through API Gateway for auth, but the ALB was technically reachable directly, bypassing the Lambda authoriser. This was closed in two steps: first restricting the ALB security group to CloudFront IPs only, then moving the ALB to private subnets with VPC Link as the only path. Anyone implementing this design should make the ALB internal-only from day one.</p></blockquote>

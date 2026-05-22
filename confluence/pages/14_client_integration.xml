@@ -49,22 +49,7 @@ POST /rest/auth/apikeys              (admin, with explicit owner)]]></ac:plain-t
 <p>Such a wrapper makes manual operations (<code>GET /rest/auth/me</code>, <code>POST /rest/auth/groups</code>, etc.) low-friction without the user managing tokens directly.</p>
 <h1>Onboarding a new consumer</h1>
 <p>The standard onboarding flow for a new partner team or service:</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant Admin
-    participant Platform
-    participant Consumer
-
-    Admin->>Platform: Create platform group<br/>(optional default claims)
-    Admin->>Platform: Link datasets to group
-    alt RLS needed
-        Admin->>Platform: Configure RLS rule(s) on dataset(s)
-    end
-    Admin->>Platform: Create group-scoped API key
-    Platform-->>Admin: Raw API key (once)
-    Admin->>Consumer: Securely deliver key
-    Consumer->>Platform: Requests with X-Api-Key
-    Platform-->>Consumer: Filtered data per group + RLS]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="14_client_integration-mermaid-1.png"/></ac:image></p>
 <p>For interactive users rather than service consumers, replace step 3 with an invitation:</p>
 <ac:structured-macro ac:name="code"><ac:plain-text-body><![CDATA[POST /rest/auth/invites { "email": "...", "group_id": "...", "role": "..." }]]></ac:plain-text-body></ac:structured-macro>
 <p>The user is invited via email; on first sign-in, the post-authentication hook converts the invitation into a membership.</p>

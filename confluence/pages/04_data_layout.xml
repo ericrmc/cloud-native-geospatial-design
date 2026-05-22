@@ -22,23 +22,7 @@
 <p>Each prefix has a single purpose and a defined producer/consumer relationship.</p>
 <table><tbody><tr><th>Prefix</th><th>Producer</th><th>Consumer</th></tr><tr><td><code>cogs/</code></td><td>External processes (data ingest)</td><td>Raster tile server, coverages API</td></tr><tr><td><code>elevation/</code></td><td>External processes</td><td>Raster tile server</td></tr><tr><td><code>mosaics/</code></td><td>External processes or admin scripts</td><td>Raster tile server, WMTS proxy</td></tr><tr><td><code>pmtiles/</code></td><td>Promotion function (atomic copy from staging)</td><td>Vector tile server</td></tr><tr><td><code>pmtiles/staging/</code></td><td>Generation task</td><td>Promotion function</td></tr><tr><td><code>source/</code></td><td>Validation task</td><td>Query layer, OGC Features API</td></tr><tr><td><code>drafts/</code></td><td>Validation and generation tasks</td><td>Reviewer (via vector tile server), editing API</td></tr><tr><td><code>landing/</code></td><td>Clients (via presigned upload)</td><td>Workflow engine (triggered by storage event)</td></tr><tr><td><code>history/</code></td><td>Promotion function (writes deltas); history vacuum (compacts)</td><td>Query layer (point-in-time queries)</td></tr><tr><td><code>metadata/dataset_events/</code></td><td>Promotion function (writes events); event-log compactor (compacts)</td><td>Admin and operations queries</td></tr></tbody></table>
 <p>The same shape, viewed as a flow:</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    CLIENT[Client / external ingest] -- presigned PUT --> LAND[("landing/<br/>uploads")]
-    CLIENT -. external batch .-> COG[("cogs/<br/>raster sources")]
-    LAND --> VAL[Validation task]
-    VAL --> SRC[("source/<br/>GeoParquet partitions")]
-    VAL --> DRAFT[("drafts/<br/>delta + diff PMTiles")]
-    SRC --> GEN[Generation task]
-    GEN --> STAGE[("pmtiles/staging/")]
-    STAGE --> PROMO[Promotion Lambda]
-    PROMO --> LIVE[("pmtiles/<br/>live tiles")]
-    PROMO --> HIST[("history/<br/>SCD2 deltas")]
-    PROMO --> EVT[("metadata/dataset_events/")]
-    LIVE --> VTS[Vector tile server]
-    SRC --> QL[Query layer / Features API]
-    COG --> RTS[Raster tile server]
-    COG --> MOS[("mosaics/<br/>MosaicJSON")] --> RTS
-    DRAFT --> VTS]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="04_data_layout-mermaid-1.png"/></ac:image></p>
 <p>Each prefix is the only thing some component writes to and the only thing some other component reads from. That one-producer-one-consumer property is what keeps lifecycle rules, IAM, and reasoning about staleness manageable.</p>
 <h2>Vector data: GeoParquet with Hive-style spatial partitioning</h2>
 <p>The authoritative storage for vector features is <strong>GeoParquet</strong> under <code>source/</code>. Files are organised by tile coordinates in a Hive-style directory layout:</p>

@@ -1,56 +1,6 @@
 <p>This document describes the overall shape of the platform: the layers, the components within each layer, and the path a request takes through them. It is the map you keep open while reading the other documents.</p>
 <h1>Five layers</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart TB
-    subgraph Edge["Edge Layer"]
-        CF["CloudFront<br/>cache policies per route class"]
-        APIGW["API Gateway HTTP API<br/>wildcard {proxy+} route"]
-        AUTH["Lambda Authoriser<br/>custom authoriser"]
-    end
-
-    subgraph Read["Read Layer"]
-        TILES["Vector tile server (Fargate)"]
-        FEAT["OGC Features API (Lambda)"]
-        QUERY["Query layer / GraphQL (Fargate)"]
-        RAS["Raster tile server (Fargate)"]
-        WMTS["WMTS/WMS proxy (Fargate)"]
-        COV["Coverages API (Fargate)"]
-        ROUTE["Routing engine (Fargate)"]
-        STAC["STAC API (Lambda)"]
-    end
-
-    subgraph Write["Write Layer"]
-        EDIT["Editing API (Lambda)"]
-        UPLOAD["Upload gate (Lambda)"]
-        SFN["Step Functions"]
-        VAL["Validation task (Fargate task)"]
-        GEN["Generation task (Fargate task)"]
-        PROMOTE["Promotion function (Lambda)"]
-    end
-
-    subgraph Admin["Admin Layer"]
-        POLICY["Policy API (Lambda)"]
-        SYNC["Dataset sync (Lambda, scheduled)"]
-        VACUUM["History vacuum (Lambda, scheduled)"]
-    end
-
-    subgraph Data["Data Layer"]
-        S3[("S3 — single bucket, prefix-organised")]
-        DDB[("DynamoDB — policies, datasets,<br/>jobs, sessions, api-keys")]
-        COG[("Cognito User Pool<br/>(or external OIDC IdP)")]
-    end
-
-    CF --> APIGW --> AUTH
-    AUTH -. reads .-> DDB
-    APIGW -- VPC Link --> ALB[Internal ALB]
-    ALB --> Read & Write & Admin
-    AUTH -. validates JWT .-> COG
-    Read --> S3
-    Read --> DDB
-    Write --> SFN --> VAL --> GEN --> PROMOTE
-    Write --> S3
-    Write --> DDB
-    Admin --> DDB
-    Admin --> S3]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="02_architecture-mermaid-1.png"/></ac:image></p>
 <h2>Edge layer</h2>
 <p>The edge layer handles TLS termination, edge caching, and authorisation. Every request entering the platform passes through it. No backend service is reachable from the public internet; the only public endpoint is the API Gateway HTTP API, and it is fronted by CloudFront.</p>
 <p>Components:</p>
@@ -71,35 +21,7 @@
 <p>Three durable substrates, each with a clear purpose:</p>
 <ul><li><strong>S3 (single bucket)</strong> — all spatial data, edit uploads, serving artefacts, SCD2 history, and event logs. Prefix-organised; lifecycle rules per prefix. See <ac:link><ri:page ri:content-title="04 — Data Layout"/><ac:plain-text-link-body><![CDATA[04 Data Layout]]></ac:plain-text-link-body></ac:link>.</li><li><strong>DynamoDB</strong> — auth policies, dataset registry, edit sessions, jobs, API keys, row-level-security configuration. Single-table designs for related data with GSIs for inverse-direction lookups; separate tables only where access patterns or TTL requirements diverge. On-demand billing, PITR enabled.</li><li><strong>Identity provider</strong> — Cognito User Pool by default, or any OIDC-compliant external IdP listed in the trusted-issuers configuration. The platform consumes signed JWTs; no identity management within the platform itself.</li></ul>
 <h1>Request flow</h1>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[sequenceDiagram
-    autonumber
-    participant Client
-    participant CF as CloudFront
-    participant GW as API Gateway HTTP API
-    participant AZ as Lambda Authoriser
-    participant DDB as DynamoDB
-    participant ALB as Internal ALB
-    participant Backend
-    participant S3
-
-    Client->>CF: Request with credential header
-    alt cached
-        CF-->>Client: Cached response
-    else miss
-        CF->>GW: Forward request (HTTPS origin)
-        GW->>AZ: Invoke custom authoriser
-        AZ->>DDB: Look up identity, ceiling, groups, datasets, RLS
-        DDB-->>AZ: Resolved context
-        AZ-->>GW: isAuthorized + context
-        GW->>ALB: HTTPS via VPC Link, with parameter-mapped X-Auth-* headers
-        ALB->>Backend: Path-based listener rule → target group (Fargate IP or Lambda)
-        Backend->>S3: Byte-range read (PMTiles / COG) or partition read (GeoParquet)
-        S3-->>Backend: Bytes
-        Backend-->>ALB: Response
-        ALB-->>GW: Response
-        GW-->>CF: Response
-        CF-->>Client: Response (cached per policy)
-    end]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="02_architecture-mermaid-2.png"/></ac:image></p>
 <p>The flow is identical for every backend in the read layer. The only thing that varies is the path the gateway matches and the backend it forwards to.</p>
 <p>For edits, the early stages of the flow are the same; the backend (the editing API) writes to the key-value store and object storage, optionally invokes the workflow engine, and returns a job identifier. The actual work happens asynchronously and the client polls the job API.</p>
 <h1>CloudFront cache policy classes</h1>

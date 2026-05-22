@@ -6,26 +6,7 @@
 <p>The trade-off is that GraphQL is not an OGC standard. The query layer is therefore intentionally an <em>internal</em> interface, separate from the standards-compliant OGC surface. Consumers who require OGC compliance use the OGC Features API; consumers who can use the richer interface use the query layer.</p>
 <h1>Capability domains</h1>
 <p>The query layer organises its capabilities into eight domains:</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    Q["Query"] --> SP["Spatial queries"]
-    Q --> GO["Geometry operations"]
-    Q --> RT["Routing"]
-    Q --> JN["Joins"]
-    Q --> FO["Fan-out"]
-    Q --> LR["Linear referencing"]
-    Q --> VA["Validation"]
-    Q --> HI["History"]
-
-    SP --> F["Feature[]"]
-    GO --> F
-    RT --> F
-    JN --> F
-    FO --> F
-    LR --> F
-    VA --> F
-    HI --> F
-
-    M["Mutation"] --> SQR["saveQueryResult"] --> NEW["New dataset"]]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="07_query_layer-mermaid-1.png"/></ac:image></p>
 <table><tbody><tr><th>Domain</th><th>Examples</th></tr><tr><td>Spatial queries</td><td>Bounding box, radius, point-in-polygon, geometry filter (inline GeoJSON or another dataset)</td></tr><tr><td>Geometry operations</td><td>Buffer, union, intersection, difference, dissolve, simplify, centroid, convex hull, explode</td></tr><tr><td>Routing</td><td>Route, isochrone, map-match, snap-to-road (delegated to the routing engine)</td></tr><tr><td>Joins</td><td>Spatial join (intersects, within, contains), attribute join</td></tr><tr><td>Fan-out</td><td>Apply an operation across multiple datasets, returning combined results</td></tr><tr><td>Linear referencing</td><td>Measure, slice, project along line geometries</td></tr><tr><td>Validation</td><td>Check a candidate feature set against schema and geometry rules</td></tr><tr><td>History</td><td>Time-travel queries against the SCD2 row history</td></tr></tbody></table>
 <p>Every operation returns a <code>Feature</code> (or list of features). This is the basis of composability.</p>
 <h1>The unified Feature type</h1>

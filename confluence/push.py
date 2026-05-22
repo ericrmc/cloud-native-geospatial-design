@@ -36,8 +36,11 @@ State:
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
+import mimetypes
 import os
+import secrets
 import sys
 import urllib.error
 import urllib.parse
@@ -46,7 +49,45 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PAGES_DIR = HERE / "pages"
+DIAGRAMS_DIR = HERE / "diagrams"
 MANIFEST_PATH = HERE / "manifest.json"
+
+
+def file_sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def build_multipart(file_path: Path, comment: str = "") -> tuple[bytes, str]:
+    """Construct a multipart/form-data body for Confluence attachment upload.
+
+    Returns (body_bytes, content_type_header).
+    """
+    boundary = "----PushPyMultipart" + secrets.token_hex(16)
+    mime, _ = mimetypes.guess_type(file_path.name)
+    if mime is None:
+        mime = "application/octet-stream"
+
+    parts: list[bytes] = []
+    parts.append(f"--{boundary}\r\n".encode())
+    parts.append(
+        f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'.encode()
+    )
+    parts.append(f"Content-Type: {mime}\r\n\r\n".encode())
+    parts.append(file_path.read_bytes())
+    if comment:
+        parts.append(f"\r\n--{boundary}\r\n".encode())
+        parts.append(b'Content-Disposition: form-data; name="comment"\r\n\r\n')
+        parts.append(comment.encode("utf-8"))
+    parts.append(f"\r\n--{boundary}\r\n".encode())
+    parts.append(b'Content-Disposition: form-data; name="minorEdit"\r\n\r\n')
+    parts.append(b"true")
+    parts.append(f"\r\n--{boundary}--\r\n".encode())
+
+    return b"".join(parts), f"multipart/form-data; boundary={boundary}"
 
 
 def state_path(base_url: str, space_key: str) -> Path:
@@ -146,6 +187,70 @@ class Confluence:
             payload["ancestors"] = [{"id": parent_id}]
         return self._request("POST", "/wiki/rest/api/content", payload)
 
+    def _multipart_request(
+        self, method: str, path: str, file_path: Path, comment: str
+    ) -> dict:
+        url = f"{self.base}{path}"
+        if self.dry_run:
+            size = file_path.stat().st_size
+            print(f"    [DRY] {method} {url}  (multipart upload: {file_path.name}, {size} bytes)")
+            return {"results": [{"id": f"DRYRUN_ATT_{file_path.name}"}]}
+        body, content_type = build_multipart(file_path, comment=comment)
+        headers = {
+            "Authorization": self.headers["Authorization"],
+            "Content-Type": content_type,
+            "Accept": "application/json",
+            # Confluence requires this header to disable XSRF check on attachment uploads.
+            "X-Atlassian-Token": "no-check",
+        }
+        req = urllib.request.Request(url, data=body, method=method, headers=headers)
+        try:
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                payload = resp.read().decode("utf-8")
+                return json.loads(payload) if payload else {}
+        except urllib.error.HTTPError as e:
+            err_body = e.read().decode("utf-8", errors="replace")
+            print(
+                f"    HTTP {e.code} on {method} {path}\n    Response: {err_body[:1000]}",
+                file=sys.stderr,
+            )
+            raise
+
+    def create_attachment(self, page_id: str, file_path: Path) -> str:
+        """Upload a new attachment to a page. Returns the attachment ID."""
+        result = self._multipart_request(
+            "POST",
+            f"/wiki/rest/api/content/{page_id}/child/attachment",
+            file_path,
+            comment="Diagram rendered by convert.py",
+        )
+        results = result.get("results", []) if isinstance(result, dict) else []
+        if results and "id" in results[0]:
+            return results[0]["id"]
+        return ""
+
+    def update_attachment(
+        self, page_id: str, attachment_id: str, file_path: Path
+    ) -> str:
+        """Replace an existing attachment's binary data. Returns the attachment ID."""
+        result = self._multipart_request(
+            "POST",
+            f"/wiki/rest/api/content/{page_id}/child/attachment/{attachment_id}/data",
+            file_path,
+            comment="Diagram re-rendered by convert.py",
+        )
+        if isinstance(result, dict):
+            if "id" in result:
+                return result["id"]
+            results = result.get("results", [])
+            if results and "id" in results[0]:
+                return results[0]["id"]
+        return attachment_id
+
+    def delete_attachment(self, attachment_id: str) -> None:
+        """Delete an attachment (which is a content object in Confluence)."""
+        self._request("DELETE", f"/wiki/rest/api/content/{attachment_id}")
+
     def update_page(
         self,
         page_id: str,
@@ -224,16 +329,21 @@ def main() -> int:
         parent_id = parent_root if is_root else root_page_id
 
         existing = state.get(filename)
+        prior_attachments = (existing or {}).get("attachments", {}) if existing else {}
+
         if existing:
             new_version = int(existing.get("version", 1)) + 1
             print(f"  Updating: {title}  (page id {existing['id']}, version -> {new_version})")
-            result = client.update_page(
+            client.update_page(
                 existing["id"], title, body, new_version, parent_id
             )
+            # Update returns the same id; keep the real one for attachment ops.
+            page_id = existing["id"]
             state[filename] = {
-                "id": result.get("id", existing["id"]),
+                "id": page_id,
                 "version": new_version,
                 "title": title,
+                "attachments": prior_attachments,
             }
         else:
             print(f"  Creating: {title}  (parent {parent_id or 'space root'})")
@@ -243,9 +353,17 @@ def main() -> int:
                 "id": page_id,
                 "version": 1,
                 "title": title,
+                "attachments": {},
             }
             if is_root and not dry_run:
                 root_page_id = page_id
+
+        # Sync diagram attachments for this page.
+        wanted = meta.get("attachments", [])
+        if wanted or prior_attachments:
+            state[filename]["attachments"] = sync_attachments(
+                client, page_id, wanted, prior_attachments, dry_run=dry_run
+            )
 
         # Persist after each page so an interrupted run can resume.
         if not dry_run:
@@ -253,6 +371,57 @@ def main() -> int:
 
     print(f"\nDone. State written to {state_file.name}.")
     return 0
+
+
+def sync_attachments(
+    client: Confluence,
+    page_id: str,
+    wanted: list[str],
+    prior: dict,
+    dry_run: bool = False,
+) -> dict:
+    """Upload, update, or delete attachments so the page matches `wanted`.
+
+    `prior` is the previous {filename: {"id": ..., "hash": ...}} for this page.
+    Returns the new attachments dict to persist in state.
+    """
+    new_attachments: dict = {}
+
+    for name in wanted:
+        path = DIAGRAMS_DIR / name
+        if not path.exists():
+            print(f"    Missing local diagram file: {name}", file=sys.stderr)
+            continue
+        current_hash = file_sha256(path)
+        prev = prior.get(name)
+        if prev and prev.get("hash") == current_hash and prev.get("id"):
+            print(f"    Attachment unchanged: {name}")
+            new_attachments[name] = prev
+            continue
+        if prev and prev.get("id"):
+            print(f"    Updating attachment: {name}")
+            att_id = client.update_attachment(page_id, prev["id"], path)
+        else:
+            print(f"    Uploading attachment: {name}")
+            att_id = client.create_attachment(page_id, path)
+        new_attachments[name] = {"id": att_id, "hash": current_hash}
+
+    # Delete attachments no longer referenced.
+    orphans = set(prior) - set(wanted)
+    for name in orphans:
+        att_id = prior[name].get("id")
+        if not att_id or att_id.startswith("DRYRUN"):
+            continue
+        print(f"    Deleting orphan attachment: {name}")
+        try:
+            if not dry_run:
+                client.delete_attachment(att_id)
+        except urllib.error.HTTPError as e:
+            # 404 means it was already removed manually; ignore.
+            if e.code != 404:
+                print(f"    Failed to delete {name}: {e}", file=sys.stderr)
+
+    return new_attachments
 
 
 if __name__ == "__main__":

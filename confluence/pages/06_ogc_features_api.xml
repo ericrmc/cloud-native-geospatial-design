@@ -7,11 +7,7 @@
 <p>The OGC Features API can be built in two ways. Pick based on whether the deployment also needs the rich query layer.</p>
 <h2>A. Standalone — Lambda over GeoParquet on S3</h2>
 <p>When the only requirement is OGC compliance for feature access, the simplest implementation is a small <strong>AWS Lambda function</strong> that reads GeoParquet directly from S3 using <strong>DuckDB</strong> with the <code>httpfs</code> and <code>spatial</code> extensions. The Lambda runs behind the ALB (or directly attached to an API Gateway integration); cold-start latency is sub-second and warm-request latency is dominated by the S3 read.</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    C[Client] --> GW[API Gateway HTTP API] --> AZ[Lambda Authoriser]
-    GW --> FN["Features Lambda<br/>(DuckDB in-process)"]
-    FN --> DDB[(DynamoDB dataset registry)]
-    FN --> S3[(S3: source/ GeoParquet)]]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="06_ogc_features_api-mermaid-1.png"/></ac:image></p>
 <p>This implementation is small enough to fit comfortably in a single Lambda. The whole flow is:</p>
 <ol><li>Receive the request; parse path and query parameters.</li><li>Read the user's accessible datasets from the permission headers.</li><li>Look up the collection in the dataset registry; reject with 404 if not present or not accessible.</li><li>Build a query against the appropriate <code>source/{dataset}/z=*/x=*/y=*/data.parquet</code> glob using the partition predicate derived from the bounding box.</li><li>Apply row-level security filters from the permission context.</li><li>Execute the query with <code>DISTINCT ON (id)</code> for deduplication.</li><li>Format the result as GeoJSON and return.</li></ol>
 <p>The handler is the only custom code. The analytical engine, the data format, and the object store handle the heavy lifting.</p>
@@ -20,12 +16,7 @@
 <blockquote><p><strong>Prior iteration.</strong> This <em>was</em> in fact the platform's original OGC Features implementation: a Fargate service running DuckDB and serving feature queries directly. When the GraphQL query layer was introduced, the Fargate service was refactored into a thin Lambda façade calling GraphQL (shape B below) so the spatial engine wasn't duplicated. The lesson: if a deployment doesn't need the query layer, the standalone Lambda shape is the right starting point — the Fargate-with-DuckDB shape was over-engineered for OGC-only use cases. Lambda has caught up: DuckDB initialises fast enough on warm Lambda containers to make Fargate's persistent-cache advantage marginal for OGC queries.</p></blockquote>
 <h2>B. Façade over the query layer</h2>
 <p>When the deployment includes the query layer (see <ac:link><ri:page ri:content-title="07 — Query Layer"/><ac:plain-text-link-body><![CDATA[07 Query Layer]]></ac:plain-text-link-body></ac:link>) — to support spatial operations, routing, joins, validation, and cross-dataset workflows — the OGC Features API can be a thin <strong>Lambda façade</strong> that translates standards-compliant HTTP requests into GraphQL calls to the query layer (a Fargate service) and translates responses back.</p>
-<ac:structured-macro ac:name="mermaid-cloud"><ac:plain-text-body><![CDATA[flowchart LR
-    C[Client] --> GW[API Gateway HTTP API] --> AZ[Lambda Authoriser]
-    GW --> FN["Features façade<br/>(Lambda)"]
-    FN --> QL["Query layer<br/>(Fargate service)"]
-    QL --> S3[(S3: source/ GeoParquet)]
-    QL --> DDB[(DynamoDB dataset registry)]]]></ac:plain-text-body></ac:structured-macro>
+<p><ac:image ac:align="center" ac:layout="center"><ri:attachment ri:filename="06_ogc_features_api-mermaid-2.png"/></ac:image></p>
 <p>The façade is responsible for:</p>
 <ul><li>Parsing OGC parameters (bbox, datetime, filter, limit, offset).</li><li>Mapping them to query-layer operations.</li><li>Formatting responses as GeoJSON, HTML, etc.</li><li>Honouring OGC conformance class requirements (pagination links, CRS handling).</li></ul>
 <p>The query layer handles the actual data access. This avoids duplicating the spatial-query engine in two places, and means improvements to the query layer (e.g. better predicate handling) automatically improve the OGC API.</p>
