@@ -23,11 +23,14 @@ Usage:
     DRY_RUN=1 python push.py
 
 State:
-    ./state.json   Maps output filename -> {"id": "...", "version": N}.
-                   Created on first successful run. Delete it to force
-                   re-creation of pages (which will fail if titles still
-                   exist in the space — Confluence requires unique titles
-                   per space).
+    ./state-<host>-<space>.json
+                   Maps output filename -> {"id": "...", "version": N} for a
+                   specific Confluence space (one file per (host, space) pair,
+                   so pushing to multiple spaces does not clobber the page
+                   IDs of any one of them). Created on first successful run.
+                   Delete to force re-creation (which will fail if titles
+                   still exist in the space — Confluence requires unique
+                   titles per space).
 """
 
 from __future__ import annotations
@@ -37,13 +40,25 @@ import json
 import os
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 PAGES_DIR = HERE / "pages"
 MANIFEST_PATH = HERE / "manifest.json"
-STATE_PATH = HERE / "state.json"
+
+
+def state_path(base_url: str, space_key: str) -> Path:
+    """Per-(host, space) state file path.
+
+    Each (Confluence host, space key) pair gets its own state file so the
+    same local edits can be pushed to multiple spaces without their page
+    ID mappings interfering. Filenames are gitignored.
+    """
+    host = urllib.parse.urlparse(base_url).hostname or "unknown"
+    safe_host = host.replace(".", "_")
+    return HERE / f"state-{safe_host}-{space_key}.json"
 
 # Files in upload order. The first entry becomes the parent of the rest.
 PAGE_ORDER = [
@@ -151,14 +166,14 @@ class Confluence:
         return self._request("PUT", f"/wiki/rest/api/content/{page_id}", payload)
 
 
-def load_state() -> dict:
-    if STATE_PATH.exists():
-        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+def load_state(path: Path) -> dict:
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
     return {}
 
 
-def save_state(state: dict) -> None:
-    STATE_PATH.write_text(
+def save_state(state: dict, path: Path) -> None:
+    path.write_text(
         json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
     )
 
@@ -183,8 +198,12 @@ def main() -> int:
     if dry_run:
         print("DRY RUN — no HTTP calls will be made.\n")
 
+    state_file = state_path(base_url, space_key)
+    print(f"Target: {base_url}  space={space_key}")
+    print(f"State:  {state_file.name}\n")
+
     client = Confluence(base_url, email, token, dry_run=dry_run)
-    state = load_state()
+    state = load_state(state_file)
 
     # Resolve the parent for child pages: it's the page corresponding to
     # index.xml once that exists.
@@ -230,9 +249,9 @@ def main() -> int:
 
         # Persist after each page so an interrupted run can resume.
         if not dry_run:
-            save_state(state)
+            save_state(state, state_file)
 
-    print(f"\nDone. State written to {STATE_PATH.name}.")
+    print(f"\nDone. State written to {state_file.name}.")
     return 0
 
 
