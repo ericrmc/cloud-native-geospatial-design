@@ -76,7 +76,7 @@
     "title": "18 — Glossary and References"
   },
   "index.xml": {
-    "source": "index.md",
+    "source": "private/intro-letter.md",
     "title": "Cloud-Native Geospatial Reference Architecture"
   }
 }

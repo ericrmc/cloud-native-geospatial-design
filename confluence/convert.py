@@ -35,6 +35,7 @@ from xml.sax.saxutils import escape as _xml_escape
 
 HERE = Path(__file__).resolve().parent
 CONTENT_DIR = HERE.parent / "content"
+PRIVATE_DIR = HERE.parent / "private"
 PAGES_DIR = HERE / "pages"
 MANIFEST_PATH = HERE / "manifest.json"
 
@@ -43,6 +44,21 @@ MANIFEST_PATH = HERE / "manifest.json"
 #   - "mermaid-cloud"  (Stiltsoft "Mermaid Diagrams for Confluence" — Cloud)
 #   - "mermaid"        (some other apps and the legacy server macro)
 MERMAID_MACRO = "mermaid-cloud"
+
+# Per-file source overrides for Confluence generation.
+#
+# Confluence is an internal-only surface (the corpus's Confluence space), so
+# some pages should be sourced from `private/` instead of `content/`. The
+# public Quartz site reads only `content/`, so this override is the mechanism
+# that lets one repository feed both audiences without sanitising on the way
+# out.
+#
+# Keys are content filenames (relative to content/). Values are paths to the
+# preferred source file. If the override file does not exist, the original
+# content/ source is used.
+SOURCE_OVERRIDES = {
+    "index.md": PRIVATE_DIR / "intro-letter.md",
+}
 
 ATTR_QUOTE = {'"': "&quot;"}
 
@@ -446,7 +462,16 @@ def main() -> int:
     manifest: dict[str, dict[str, str]] = {}
 
     for md_path in sorted(CONTENT_DIR.glob("*.md")):
-        md = md_path.read_text(encoding="utf-8")
+        # Honour any Confluence-specific source override.
+        override = SOURCE_OVERRIDES.get(md_path.name)
+        if override and override.exists():
+            source_path = override
+            source_label = f"private/{override.name}"
+        else:
+            source_path = md_path
+            source_label = md_path.name
+
+        md = source_path.read_text(encoding="utf-8")
         title = extract_title(md)
         conv = Converter(titles)
         body = conv.convert(md)
@@ -456,10 +481,10 @@ def main() -> int:
         out_path.write_text(body + "\n", encoding="utf-8")
 
         manifest[out_name] = {
-            "source": md_path.name,
+            "source": source_label,
             "title": title,
         }
-        print(f"  {md_path.name:32s} -> pages/{out_name:32s} \"{title}\"")
+        print(f"  {source_label:36s} -> pages/{out_name:32s} \"{title}\"")
 
     MANIFEST_PATH.write_text(
         json.dumps(manifest, indent=2, ensure_ascii=False) + "\n",
