@@ -63,6 +63,7 @@ The platform is positioned as **state-of-the-art serverless spatial computing**:
 | 16 | [Design Decisions](16_DESIGN_DECISIONS.md) | Standalone record of pivotal choices and trade-offs |
 | 17 | [Further Directions](17_FURTHER_DIRECTIONS.md) | Eleven sketched extensions — semantic discovery, geocoding, point clouds, 3D, computer vision, multi-agent orchestration, field capture, reports, subscriptions, change detection, live data |
 | 18 | [Glossary and References](18_GLOSSARY_AND_REFERENCES.md) | Reference index — every term, format, service, standard, library, and peer OGC stack named across the documentation, with canonical URLs |
+| 19 | [Lakehouse Integration](19_LAKEHOUSE_INTEGRATION.md) | Reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose |
 
 ## AWS as the reference platform
 
