@@ -44,7 +44,7 @@ The platform's role is the same as for PMTiles: store the file in S3, gate acces
 
 ## 4. 3D rendering with Cesium / TerriaJS
 
-A 3D companion to the 2D MapLibre map client described in [15 Map Client](15_MAP_CLIENT.md). **TerriaJS**, running on **CesiumJS**, renders point clouds (COPC natively), COGs draped over terrain, time-dynamic data, and routing geometry on actual terrain. Shares the dataset catalogue and auth gate with the rest of the platform.
+A 3D companion to the 2D MapLibre map client described in [15 Map Client](15_MAP_CLIENT.md). **TerriaJS**, running on **CesiumJS**, renders point clouds (COPC natively), **OGC 3D Tiles** for textured meshes and photogrammetry, COGs draped over terrain, time-dynamic data, and routing geometry on actual terrain. Shares the dataset catalogue and auth gate with the rest of the platform. 3D Tiles is the natural sibling streaming format to PMTiles and COG for the 3D-asset class — anything produced through the pipeline sketched in §12 will be consumed here without format conversion.
 
 A 3D view is the natural primary surface for some tasks — flythrough of LiDAR, terrain-aware route inspection, infrastructure planning against elevation. The 2D MapLibre client and the 3D Cesium/TerriaJS shell coexist; users choose based on the task.
 

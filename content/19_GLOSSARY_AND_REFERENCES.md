@@ -95,6 +95,7 @@ Within each category, entries are alphabetical. Where a canonical URL does not e
 
 ## 4. OGC and related standards
 
+- **[3D Tiles](https://www.ogc.org/standard/3dtiles/)** — OGC Community Standard for streaming 3D content (textured meshes, photogrammetry, point clouds, 3D models). Natively consumed by CesiumJS and TerriaJS; the sibling streaming format to PMTiles and COG for the 3D-asset class — see [17 Further Directions §12](17_FURTHER_DIRECTIONS.md#12-3d-and-visual-asset-management--vams-style-extension).
 - **[CQL2](https://docs.ogc.org/is/21-065r2/21-065r2.html)** — OGC Common Query Language v2, text/JSON filter syntax for OGC API endpoints.
 - **[CRS84 and EPSG codes](https://epsg.io/)** — coordinate reference system identifiers; CRS84 is the OGC alias for WGS84 lon/lat, EPSG codes index all CRSes.
 - **[CZML](https://github.com/AnalyticalGraphicsInc/czml-writer/wiki/CZML-Structure)** — JSON streaming format for time-dynamic 3D scene data, native to CesiumJS.
@@ -122,11 +123,14 @@ Within each category, entries are alphabetical. Where a canonical URL does not e
 
 - **[amazon-cognito-identity-js](https://github.com/aws-amplify/amplify-js/tree/main/packages/amazon-cognito-identity-js)** — JavaScript SDK for Cognito User Pool authentication flows.
 - **[CesiumJS](https://cesium.com/platform/cesiumjs/)** — WebGL 3D globe and map engine supporting COPC, terrain, and CZML.
+- **[deck.gl](https://deck.gl/)** — WebGL2 layer framework for large-scale data visualisation, commonly paired with MapLibre. Evaluated for the first-party map client; MapLibre alone covered the platform's needs without deck.gl's additional surface area.
 - **[Esri VectorTileServer REST](https://developers.arcgis.com/rest/services-reference/enterprise/vector-tile-service/)** — Esri's proprietary REST contract for vector tile services consumed by ArcGIS Enterprise.
 - **[Form.io](https://form.io/)** — offline-capable form runtime and builder, suggested for field-data capture.
 - **[GraphiQL](https://github.com/graphql/graphiql)** — in-browser IDE for interactive GraphQL query construction with schema introspection.
+- **[Kepler.gl](https://kepler.gl/)** — Open-source large-scale geospatial data visualisation tool built on deck.gl. Evaluated alongside deck.gl; same reasoning — additional capability the platform's map client did not require.
 - **[MapLibre GL JS](https://maplibre.org/)** — open-source WebGL renderer for vector and raster maps, fork of Mapbox GL JS v1.
 - **[MapLibre Style Spec](https://maplibre.org/maplibre-style-spec/)** — JSON specification for declarative styling of vector and raster maps.
+- **[Potree](https://github.com/potree/potree)** — Web-based point cloud viewer; common pair with COPC. Evaluated alongside CesiumJS for any 3D direction; CesiumJS was preferred for breadth (handles point cloud, mesh, terrain, and imagery in one engine) given the platform's focus on hosting rather than specialist visualisation.
 - **[React](https://react.dev/)** — JavaScript library for component-based user interfaces; v19 with the React Compiler used in the map client.
 - **[React JSON Schema Form (RJSF)](https://github.com/rjsf-team/react-jsonschema-form)** — React library that renders forms from JSON Schema definitions with client-side validation.
 - **[TerriaJS](https://terria.io/)** — open-source spatial-data explorer shell built on CesiumJS, originated by CSIRO Data61.
@@ -149,7 +153,12 @@ Within each category, entries are alphabetical. Where a canonical URL does not e
 
 These are the geospatial stacks worth being aware of when considering or extending this platform. Most are standards-compliant OGC peers; one (VAMS) is adjacent — a 3D / visual-asset platform that shares this platform's serverless substrate. Several were evaluated explicitly during the design — see [Peer stacks and prior art](16_DESIGN_DECISIONS.md) in [16 Design Decisions](16_DESIGN_DECISIONS.md).
 
+- **[Apache Sedona](https://sedona.apache.org/)** — Distributed spatial SQL extension for Apache Spark, Flink, and Snowflake; underpins Databricks GeoBrix and Wherobots. Evaluated; analytical-first — well-suited to lakehouse compute, not to stateless serving. See [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md).
+- **[CARTO](https://carto.com/)** — Commercial spatial analytics platform; Analytics Toolbox runs inside Snowflake, BigQuery, Databricks, and Redshift. Evaluated; requires a warm cluster as its substrate, which conflicts with the scale-to-zero target.
 - **[eoAPI](https://eoapi.dev/)** — Development Seed's reference stack bundling pgSTAC, TiTiler, and tipg; the closest peer assembly to this platform. NASA IMPACT, MAAP, and VEDA build on it.
+- **[Felt](https://felt.com/)** — Browser-native collaborative mapping platform; current maintainer of Tippecanoe (see [D6 in 16 Design Decisions](16_DESIGN_DECISIONS.md)). Evaluated; per-seat licensing does not fit a platform whose consumers are mostly anonymous or programmatic.
+- **[GeoMesa](https://www.geomesa.org/)** — Spatio-temporal indexing layer over Accumulo, HBase, Cassandra, or Kafka. Evaluated; needs a managed cluster of its own, which conflicts with the scale-to-zero target.
+- **[GeoNetwork](https://geonetwork-opensource.org/)** — Long-standing open-source metadata catalog implementing OGC CSW and ISO 19115/19139. Evaluated as the discovery layer; the DynamoDB dataset registry plus a STAC façade filled the same role with less always-on overhead.
 - **[GeoNode](https://geonode.org/)** — Django-based geospatial CMS layered on GeoServer.
 - **[GeoServer](https://geoserver.org/)** — Java-based OGC services server (WMS, WFS, WCS, WMTS, plus OGC APIs).
 - **[GeoServer Cloud](https://github.com/geoserver/geoserver-cloud)** — Spring Boot microservices refactor of GeoServer for cloud-native ECS/Kubernetes deployment. Trialled here and rejected for specific gaps (private-S3 COG reads, SOAP mosaic generation, UI friction); see [Peer stacks and prior art](16_DESIGN_DECISIONS.md) for the full assessment.
@@ -159,11 +168,16 @@ These are the geospatial stacks worth being aware of when considering or extendi
 - **[Martin](https://martin.maplibre.org/)** — Rust vector-tile server backed by PostgreSQL/PostGIS or PMTiles; replaced here by go-pmtiles.
 - **[pg_featureserv](https://github.com/CrunchyData/pg_featureserv)** — lightweight Go OGC API Features server over PostGIS.
 - **[pg_tileserv](https://github.com/CrunchyData/pg_tileserv)** — lightweight Go vector tile server over PostGIS.
+- **[pgRouting](https://pgrouting.org/)** — PostGIS extension for in-database network routing. Evaluated; eliminated by D1 (no PostgreSQL in the read path). Valhalla — see [09 Routing](09_ROUTING.md) — covers the same use cases without a database dependency.
 - **[pgSTAC](https://github.com/stac-utils/pgstac)** — PostgreSQL-backed STAC implementation used in this platform's prior iteration, since replaced.
 - **[pygeoapi](https://pygeoapi.io/)** — Python OGC API reference implementation (Features, Coverages, Tiles, Processes, EDR, Records). Did not (at the time of this design) provide GeoJSON feature editing over object-store-backed providers, which is the gap the editing pipeline fills.
+- **[stac-browser](https://github.com/radiantearth/stac-browser)** — Static UI for browsing any STAC API; common companion to stac-fastapi. Evaluated as the catalogue front-end; the first-party map client absorbed the same role within the platform's auth gate.
 - **[stac-fastapi](https://stac-utils.github.io/stac-fastapi/)** — Python/FastAPI STAC API server with multiple backend adapters (pgSTAC, OpenSearch, ElasticSearch).
+- **[Tegola](https://tegola.io/)** — Go vector tile server backed by PostGIS, GeoPackage, or HANA. Evaluated; limited fit for the platform's PMTiles-first, database-free serving model.
+- **[TiMVT](https://developmentseed.org/timvt/)** — Lightweight Python dynamic vector tile server over PostGIS from Development Seed. Evaluated; limited fit for the same database-free reasons as Tegola.
 - **[tipg](https://developmentseed.org/tipg/)** — Development Seed's OGC API Features and Tiles server over PostGIS.
 - **[titiler-pgstac](https://stac-utils.github.io/titiler-pgstac/)** — TiTiler variant that builds raster mosaics from STAC search backed by pgSTAC.
+- **[T-Rex](https://t-rex.tileserver.ch/)** — Rust vector tile server over PostGIS. Evaluated; limited fit for the same database-free reasons as Tegola, and less actively maintained than Martin.
 - **[Visual Asset Management System (VAMS)](https://awslabs.github.io/visual-asset-management-system/)** — AWS Labs' serverless 3D / point cloud / CAD asset management platform on S3 + DynamoDB + OpenSearch, with configurable processing pipelines, a browser viewer with 17+ format plugins, and ABAC/RBAC at API and data-entity levels. Adjacent rather than OGC; partly inspired this platform's authorisation design and is the natural reference if 3D and visual assets become first-class — see [17 Further Directions §12](17_FURTHER_DIRECTIONS.md#12-3d-and-visual-asset-management--vams-style-extension).
 
 ## 9. Infrastructure-as-code
