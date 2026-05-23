@@ -1,4 +1,4 @@
-# 18 — Glossary and References
+# 19 — Glossary and References
 
 A reference index for everything named in this corpus — formats, services, standards, libraries, concepts, and the peer OGC stacks worth being aware of. Each entry gives a one-line description and a canonical URL.
 

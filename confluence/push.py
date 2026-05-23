@@ -103,29 +103,17 @@ def state_path(base_url: str, space_key: str) -> Path:
     return HERE / f"state-{safe_host}-{space_key}.json"
 
 # Files in upload order. The first entry becomes the parent of the rest.
-PAGE_ORDER = [
-    "index.xml",
-    "00_index.xml",
-    "01_principles.xml",
-    "02_architecture.xml",
-    "03_authorisation.xml",
-    "04_data_layout.xml",
-    "05_vector_tiles.xml",
-    "06_ogc_features_api.xml",
-    "07_query_layer.xml",
-    "08_raster_services.xml",
-    "09_routing.xml",
-    "10_discovery.xml",
-    "11_editing_pipeline.xml",
-    "12_deployment.xml",
-    "13_operations.xml",
-    "14_client_integration.xml",
-    "15_map_client.xml",
-    "16_design_decisions.xml",
-    "17_further_directions.xml",
-    "18_glossary_and_references.xml",
-    "19_lakehouse_integration.xml",
-]
+ROOT_PAGE = "index.xml"
+
+
+def derive_page_order(manifest: dict) -> list[str]:
+    """Build the push order from the manifest so adding a chapter is a one-file change.
+
+    ROOT_PAGE goes first (it is the parent for everything else); the remaining
+    pages sort alphabetically, which puts 00_, 01_, ... 19_ in chapter order.
+    """
+    others = sorted(name for name in manifest if name != ROOT_PAGE)
+    return ([ROOT_PAGE] if ROOT_PAGE in manifest else []) + others
 
 
 def env(name: str, default: str | None = None) -> str | None:
@@ -418,7 +406,7 @@ def main() -> int:
     root_state = state.get(root_filename)
     root_page_id: str | None = root_state["id"] if root_state else None
 
-    for filename in PAGE_ORDER:
+    for filename in derive_page_order(manifest):
         page_path = PAGES_DIR / filename
         if not page_path.exists():
             print(f"  Skipping {filename} (not found)")

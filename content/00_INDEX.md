@@ -62,8 +62,8 @@ The platform is positioned as **state-of-the-art serverless spatial computing**:
 | 15 | [Map Client](15_MAP_CLIENT.md) | First-party React + MapLibre web app: catalogue, editing, review, GraphiQL, live pipeline link |
 | 16 | [Design Decisions](16_DESIGN_DECISIONS.md) | Standalone record of pivotal choices and trade-offs |
 | 17 | [Further Directions](17_FURTHER_DIRECTIONS.md) | Eleven sketched extensions — semantic discovery, geocoding, point clouds, 3D, computer vision, multi-agent orchestration, field capture, reports, subscriptions, change detection, live data |
-| 18 | [Glossary and References](18_GLOSSARY_AND_REFERENCES.md) | Reference index — every term, format, service, standard, library, and peer OGC stack named across the documentation, with canonical URLs |
-| 19 | [Lakehouse Integration](19_LAKEHOUSE_INTEGRATION.md) | Reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose |
+| 18 | [Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md) | Reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose |
+| 19 | [Glossary and References](19_GLOSSARY_AND_REFERENCES.md) | Reference index — every term, format, service, standard, library, and peer OGC stack named across the documentation, with canonical URLs |
 
 ## AWS as the reference platform
 
@@ -101,4 +101,4 @@ This design is a snapshot of considered work, not eternal truth. The research an
 - **April 2026** — final tweaks and consolidation.
 - **May 2026** — this design documentation assembled.
 
-Seven months is enough time for the AWS, OGC, and open-source landscape to move. Several technology claims here may already have been overtaken — Aurora Serverless v2 added true scale-to-zero late in this window (see the callout under [D1 in 16 Design Decisions](16_DESIGN_DECISIONS.md)); Bedrock AgentCore matured rapidly; OpenSearch Serverless pricing shifted; mermaid macro names in Confluence Cloud changed providers. Where the documentation has caught up, it says so. Where it has not, treat every concrete tech claim as **true when written, not true forever**. Re-check the canonical sources in [18 Glossary and References](18_GLOSSARY_AND_REFERENCES.md) before committing to a build path. The [closing note in 17 Further Directions](17_FURTHER_DIRECTIONS.md#a-note-on-dates) bookends this point.
+Seven months is enough time for the AWS, OGC, and open-source landscape to move. Several technology claims here may already have been overtaken — Aurora Serverless v2 added true scale-to-zero late in this window (see the callout under [D1 in 16 Design Decisions](16_DESIGN_DECISIONS.md)); Bedrock AgentCore matured rapidly; OpenSearch Serverless pricing shifted; mermaid macro names in Confluence Cloud changed providers. Where the documentation has caught up, it says so. Where it has not, treat every concrete tech claim as **true when written, not true forever**. Re-check the canonical sources in [19 Glossary and References](19_GLOSSARY_AND_REFERENCES.md) before committing to a build path. The [closing note in 17 Further Directions](17_FURTHER_DIRECTIONS.md#a-note-on-dates) bookends this point.

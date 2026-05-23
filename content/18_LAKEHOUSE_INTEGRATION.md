@@ -1,4 +1,4 @@
-# 19 — Lakehouse Integration
+# 18 — Lakehouse Integration
 
 This platform and a modern data lakehouse (Delta Lake on Databricks, Iceberg on Snowflake, Iceberg on Spark or Trino, or equivalent) overlap visibly enough that an architect with a lakehouse already in production is right to ask whether this platform is duplicating capability they already pay for. The honest answer is: the overlap is real, the lakehouse has closed several of the gaps that justified building this platform in the first place, and there is still a defensible line — but it is a line drawn by **who consumes the data**, not by what kind of data it is.
 
