@@ -42,6 +42,8 @@ This design choice has consequences:
 - **Data freshness is image rebuild frequency.** Updating the road network for a region means rebuilding the image. Monthly or quarterly cadence is typical.
 - **Region expansion is non-trivial.** Adding a new region means a larger OSM extract, longer build time, larger image. Multi-region deployments may want multiple routing services rather than one large one.
 
+> *In plain terms:* the road network is frozen into the container the routing engine runs in. That makes the engine deterministic and dependency-free at runtime — but updating road data means rebuilding and redeploying the image, not pointing it at a fresher feed.
+
 ## Compute model
 
 The routing engine runs as a **Fargate service**. Memory requirements depend on graph size; a regional graph typically fits in 4–8 GB. CPU per request is modest; the bottleneck is graph traversal.

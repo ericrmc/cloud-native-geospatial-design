@@ -97,6 +97,8 @@ Regardless of implementation shape, the OGC API surface supports the same query 
 
 **Bbox queries use partition pushdown.** A request with a bbox is converted to the set of tile coordinates at the dataset's partition zoom that intersect the bbox. Only the GeoParquet files in those partitions are read. Predicate pushdown inside Parquet further reduces row-group reads.
 
+> *In plain terms:* a bbox query never opens files outside the area the user asked about, and inside each file it skips chunks whose stored min/max values fall outside the bbox. Two layers of skipping compound, which is what makes feature queries fast against millions of rows without a running database.
+
 **Single-feature retrieval is a point lookup.** The platform's deduplication strategy means every dataset has a designated `id_column`. The endpoint `GET /collections/{id}/items/{feature_id}` queries `WHERE {id_column} = {feature_id}` with `LIMIT 1`. The query touches whatever partitions hold the feature; for datasets with millions of features, this completes in milliseconds with proper Parquet statistics.
 
 **Pagination uses cursor semantics under the hood.** Limit/offset is supported for compatibility, but offset-based pagination on large datasets is expensive. Implementations should prefer cursor-based pagination (using the last seen `id` as the cursor) for deep paging.

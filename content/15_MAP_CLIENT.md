@@ -165,6 +165,8 @@ The "live" feel of the client comes from two cooperating mechanisms.
 
 The pattern is fully asynchronous: no WebSocket, no SSE. The platform's S3 + ETag-driven refresh and the client's polling carry the load.
 
+> *In plain terms:* the "live" feel is bought with a short polling loop and the tile server's automatic ETag refresh, not with a persistent socket connection. That keeps every component stateless and scale-to-zero-friendly — there is no socket server to keep warm.
+
 ## Permission-aware UI
 
 The client never exposes operations a user cannot perform.
