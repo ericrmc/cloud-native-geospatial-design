@@ -25,7 +25,7 @@ The substance lives in `content/`:
 - `16_DESIGN_DECISIONS.md` — 30+ decisions with rationale and prior-iteration lessons
 - `17_FURTHER_DIRECTIONS.md` — sketched extensions worth exploring (semantic discovery, geocoding, point clouds, 3D, CV, multi-agent, field capture, reports, subscriptions, change detection, live data)
 - `18_LAKEHOUSE_INTEGRATION.md` — reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose
-- `19_GLOSSARY_AND_REFERENCES.md` — every term, format, service, standard, library, and peer OGC stack named in the corpus, with canonical URLs
+- `19_GLOSSARY_AND_REFERENCES.md` — every term, format, service, standard, library, and peer geospatial stack named in the corpus, with canonical URLs
 
 ## Running locally
 

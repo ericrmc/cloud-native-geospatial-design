@@ -136,15 +136,29 @@ The platform is batch-oriented today: edits land, the pipeline runs, tiles updat
 
 **What needs designing.** A different cost shape than the rest of the platform — live ingest implies always-on compute, even if low-volume. Retention policy: keep all historical readings (large, expensive), or only the most recent per source (cheap, no replay)? Time-window queries ("last 5 minutes of bus positions") in OpenSearch. UX for live overlays — animation versus snapshot, opacity for older readings, separate styling from authoritative data. Authentication: many external live feeds need credentials of their own that the platform must rotate and protect.
 
+## 12. 3D and visual asset management — VAMS-style extension
+
+3D models, point clouds, CAD, and media don't yet fit anywhere in the platform's serving model — vector and raster handle most of the spatial corpus but not the visual-asset class. AWS Labs' [Visual Asset Management System (VAMS)](https://awslabs.github.io/visual-asset-management-system/) has trodden this path on the same substrate this platform uses: S3 as source of truth, DynamoDB for metadata and policy, Lambda and serverless pipelines for asset transforms, a browser viewer with seventeen-plus built-in plugins for 3D, point cloud, CAD, media, and document formats, and ABAC/RBAC at both the API and data-entity levels. The platform can be extended to absorb the same workloads, or VAMS can sit alongside it behind the existing auth gate.
+
+VAMS is also part of this platform's lineage. Its API-and-data-level access control was one of the inputs that shaped the auth design in [03 Authorisation](03_AUTHORISATION.md); the platform landed on a simpler version of the same idea (one Lambda authoriser, group ceilings, dataset grants, RLS) because the broader complexity VAMS carries was not needed for vector-and-raster serving. The thinking carries over the other direction — if 3D and CAD become first-class here, VAMS's processing-pipeline and asset-versioning model is the closest reference for how the editing pipeline would extend.
+
+> *In plain terms:* the platform already does for vector and raster what VAMS does for 3D and CAD. Either bolt VAMS into the auth gate as a sibling backend, or extend the platform's pipeline and viewer to cover visual assets directly — whichever is closer to the workloads in scope.
+
+**Why it fits.** S3 + DynamoDB + Lambda + serverless pipelines is shared substrate. The editing pipeline (see [11 Editing Pipeline](11_EDITING_PIPELINE.md)) is structurally close to VAMS's asset-version-and-process model. The auth gate is the natural integration point for either path; the 3D rendering surface sketched in §4 is the natural client.
+
+**Concrete tech to consider.** Deploy VAMS behind the existing auth gate via a new ALB listener rule (one new path prefix, no per-VAMS-route auth code), or extend the editing pipeline to accept 3D and CAD inputs and register them with a new `data_type` (`asset`) — reusing VAMS-equivalent viewer plugins on the client side. For asset transforms (CAD → glTF, point cloud → COPC, mesh decimation), AWS Batch is likely a better substrate than transient Fargate tasks because asset pipelines run longer and want more ephemeral storage than the current 200 GiB ceiling.
+
+**What needs designing.** The integrate-vs-extend choice — different consequences for who owns the asset registry, who manages access, and whether visual assets share the dataset lifecycle (review, versioning, history) with vector and raster. Identity-passthrough between this platform's auth and VAMS's ABAC/RBAC if integrating. Storage of large binaries and their derivatives (cost shape diverges from Parquet-and-tile economics). Viewer surface — whether the existing map client (see [15 Map Client](15_MAP_CLIENT.md)) gains 3D plugins or a separate viewer ships alongside it.
+
 ## What is solid, what needs work
 
 To borrow the framing from [10 Discovery](10_DISCOVERY.md):
 
 **Solid.** None of it. Treat every section as a starting point.
 
-**Designed but not built.** All eleven. Each section is well enough thought through to brief an architect; none has had code written against it as part of this platform's prototype.
+**Designed but not built.** All twelve. Each section is well enough thought through to brief an architect; none has had code written against it as part of this platform's prototype.
 
-**Where the work is heaviest.** The first three (semantic discovery, geocoding, point clouds) extend patterns and substrates the platform already uses — moderate effort, fits naturally. The middle three (3D, computer vision, agents) introduce new substrates with their own operational shapes. The last five (field capture, reports, subscriptions, change detection, live data) introduce new workflows with substantial product design work alongside the engineering.
+**Where the work is heaviest.** The first three (semantic discovery, geocoding, point clouds) extend patterns and substrates the platform already uses — moderate effort, fits naturally. The middle three (3D, computer vision, agents) introduce new substrates with their own operational shapes. The last five (field capture, reports, subscriptions, change detection, live data) introduce new workflows with substantial product design work alongside the engineering. The twelfth (3D and visual asset management) shares this platform's substrate but introduces a different file ecosystem and the option of integrating a peer system (VAMS) rather than building from scratch — appended out of strict ease-of-fit order so the existing section numbering is preserved.
 
 These are doors, not roads. A future team reading this set should treat each section as a starting point — enough to spark a design conversation, not enough to commit to a build without one.
 

@@ -1,6 +1,6 @@
 # 19 — Glossary and References
 
-A reference index for everything named in this corpus — formats, services, standards, libraries, concepts, and the peer OGC stacks worth being aware of. Each entry gives a one-line description and a canonical URL.
+A reference index for everything named in this corpus — formats, services, standards, libraries, concepts, and the peer geospatial stacks worth being aware of. Each entry gives a one-line description and a canonical URL.
 
 > *In plain terms:* the lookup you reach for when a previous chapter mentions a thing and you want the official documentation. Quartz's backlinks panel shows you where each term is used; this page tells you where to learn more.
 
@@ -13,7 +13,7 @@ Categories:
 5. Identity, auth, and security
 6. Map clients, libraries, and frontend tools
 7. Spatial and data concepts
-8. Peer OGC stacks
+8. Peer geospatial stacks
 9. Infrastructure-as-code
 10. Other references
 
@@ -145,9 +145,9 @@ Within each category, entries are alphabetical. Where a canonical URL does not e
 - **[Tile coordinates (z/x/y)](https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames)** — Web Mercator slippy-map tiling scheme; the basis for XYZ tile URLs and PMTiles indexing.
 - **[Web Mercator (EPSG:3857)](https://epsg.io/3857)** — projected CRS used by most web mapping tile pyramids.
 
-## 8. Peer OGC stacks
+## 8. Peer geospatial stacks
 
-These are the standards-compliant geospatial stacks worth being aware of when considering or extending this platform. Several were evaluated explicitly during the design — see [Peer stacks and prior art](16_DESIGN_DECISIONS.md) in [16 Design Decisions](16_DESIGN_DECISIONS.md).
+These are the geospatial stacks worth being aware of when considering or extending this platform. Most are standards-compliant OGC peers; one (VAMS) is adjacent — a 3D / visual-asset platform that shares this platform's serverless substrate. Several were evaluated explicitly during the design — see [Peer stacks and prior art](16_DESIGN_DECISIONS.md) in [16 Design Decisions](16_DESIGN_DECISIONS.md).
 
 - **[eoAPI](https://eoapi.dev/)** — Development Seed's reference stack bundling pgSTAC, TiTiler, and tipg; the closest peer assembly to this platform. NASA IMPACT, MAAP, and VEDA build on it.
 - **[GeoNode](https://geonode.org/)** — Django-based geospatial CMS layered on GeoServer.
@@ -164,6 +164,7 @@ These are the standards-compliant geospatial stacks worth being aware of when co
 - **[stac-fastapi](https://stac-utils.github.io/stac-fastapi/)** — Python/FastAPI STAC API server with multiple backend adapters (pgSTAC, OpenSearch, ElasticSearch).
 - **[tipg](https://developmentseed.org/tipg/)** — Development Seed's OGC API Features and Tiles server over PostGIS.
 - **[titiler-pgstac](https://stac-utils.github.io/titiler-pgstac/)** — TiTiler variant that builds raster mosaics from STAC search backed by pgSTAC.
+- **[Visual Asset Management System (VAMS)](https://awslabs.github.io/visual-asset-management-system/)** — AWS Labs' serverless 3D / point cloud / CAD asset management platform on S3 + DynamoDB + OpenSearch, with configurable processing pipelines, a browser viewer with 17+ format plugins, and ABAC/RBAC at API and data-entity levels. Adjacent rather than OGC; partly inspired this platform's authorisation design and is the natural reference if 3D and visual assets become first-class — see [17 Further Directions §12](17_FURTHER_DIRECTIONS.md#12-3d-and-visual-asset-management--vams-style-extension).
 
 ## 9. Infrastructure-as-code
 
