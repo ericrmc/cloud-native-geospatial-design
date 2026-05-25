@@ -2,6 +2,65 @@
 
 This document describes the overall shape of the platform: the layers, the components within each layer, and the path a request takes through them. It is the map you keep open while reading the other documents.
 
+## Platform at a glance
+
+The platform organises around four user-facing capabilities — ingest, manage, serve, and discover. Vector data enters as feature edits or bulk upload, gets validated, partitioned, tiled, and promoted; raster data is registered via MosaicJSON over COGs already on S3. Both types are served through standards-compliant APIs and surfaced in a single STAC catalogue scoped to what each user is allowed to see.
+
+```mermaid
+flowchart TB
+    subgraph IngestV["Ingest — Vector"]
+        FE["Feature Edits<br/>(GeoJSON via Features API)"]
+        BU["Bulk Upload<br/>(GeoParquet via presigned URL)"]
+        LAND[("S3 Landing Zone")]
+        subgraph Jobs["Jobs service"]
+            VAL["Validate"]
+            GEN["Generate<br/>(GeoParquet + PMTiles)"]
+            PROM["Promote"]
+        end
+        FE --> LAND
+        BU --> LAND
+        LAND --> VAL --> GEN --> PROM
+    end
+
+    subgraph Manage["Manage"]
+        REG["Register Dataset"]
+        CFG["Configure Access<br/>(groups, API keys, sharing)"]
+        INV["Invite Users"]
+        REG --> CFG --> INV
+    end
+
+    subgraph RasterIn["Raster"]
+        MOS["Ingest MosaicJSON<br/>(references COGs on S3)"]
+        COGS[("COGs on S3")]
+        MOS --> COGS
+    end
+
+    subgraph Serve["Serve"]
+        OGCF["OGC Features<br/>(GeoParquet)"]
+        VT["Vector Tiles<br/>(PMTiles)"]
+        RT["Raster Tiles / WMTS<br/>WMS (time-enabled)"]
+        OGCC["OGC Coverages<br/>(elevation)"]
+    end
+
+    subgraph Discover["Discover"]
+        STAC["STAC Catalogue<br/>(scoped to user access)"]
+    end
+
+    CONS["Web Maps / QGIS /<br/>ArcGIS / Apps"]
+
+    PROM --> OGCF
+    PROM --> VT
+    COGS --> RT
+    COGS --> OGCC
+    OGCF --> STAC
+    VT --> STAC
+    RT --> STAC
+    OGCC --> STAC
+    STAC --> CONS
+```
+
+The rest of this document decomposes the same platform into technical layers and request flows.
+
 ## Five layers
 
 ```mermaid
