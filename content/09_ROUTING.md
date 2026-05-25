@@ -76,7 +76,7 @@ The routing engine runs as a **Fargate service**. Memory requirements depend on 
 
 Concurrency is per-request: each HTTP request is handled by a thread. The engine is not horizontally stateful — multiple Fargate tasks can run independently, each with its own copy of the (read-only) graph baked into the image.
 
-For scale-to-zero: the engine cold-starts in tens of seconds (Fargate task start, image pull, graph load). The `minimal` scaling mode keeps one warm task at low cost. Routing is not on the critical path for tile or feature serving, so cold starts on the routing engine do not affect the platform's core read latency.
+When run in `off` mode: the engine cold-starts in tens of seconds (Fargate task start, image pull, graph load), and during that window first requests will return HTTP 503. The `minimal` scaling mode keeps one warm task at low cost and avoids this. Routing is not on the critical path for tile or feature serving, so cold starts on the routing engine do not affect the platform's core read latency.
 
 ## Integration with the query layer
 

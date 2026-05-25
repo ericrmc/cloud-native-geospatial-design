@@ -8,7 +8,7 @@ A complete, implementation-independent description of a serverless geospatial pl
 
 A vendor-ready design artefact. It describes *what* the platform is, *why* each design choice was made, and *how* the components fit together. It is not a code guide, a tutorial, or a record of any specific implementation. A team reading this set should be able to construct an equivalent platform — in their preferred cloud, languages, and frameworks — and arrive at substantively the same behaviour.
 
-The platform is positioned as **state-of-the-art serverless spatial computing**: cloud-native data formats served directly from object storage, scale-to-zero by default, with a coherent authorisation model and a reviewed editing pipeline. The audience is technical decision-makers, architects, and implementers.
+The platform is positioned as **state-of-the-art serverless spatial computing**: cloud-native data formats served directly from object storage, costing almost nothing when idle, with a coherent authorisation model and a reviewed editing pipeline. The audience is technical decision-makers, architects, and implementers.
 
 ## What the platform does
 
@@ -34,7 +34,7 @@ Every request is authorized before reaching any backend. Groups, roles (admin �
 
 ### What's different from traditional GIS
 
-No per-layer GeoServer publishing, no manual ETL, no PostGIS required for serving. Serverless, scales to zero, centralised auth, automatic CDN invalidation, and a single catalogue across all services.
+No per-layer GeoServer publishing, no manual ETL, no PostGIS required for serving. Serverless, costs almost nothing when idle, centralised auth, automatic CDN invalidation, and a single catalogue across all services.
 
 ### Client support
 

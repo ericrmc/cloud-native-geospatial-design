@@ -239,7 +239,7 @@ The query layer's GraphQL schema is introspectable and the schema's evolution fo
 
 ## What clients should expect
 
-- **Cold-start latency.** In scale-to-zero deployments, the first request after idle may take tens of seconds to a couple of minutes (container services). Subsequent requests are fast.
+- **Cold-start latency.** In deployments configured with `off` scaling for container-backed services, the first request after idle returns HTTP 503 while ECS scales the service back up (60–120 seconds typically). Clients should retry with backoff; subsequent requests are fast. Deployments running `minimal` or `performance` mode do not hit this path.
 - **Cache effects.** Tiles cache for seven days per credential at the edge; metadata caches for one hour. Permission changes are visible within five minutes.
 - **No reorderable response.** OGC Features returns results in a consistent order (typically by feature ID).
 - **Standards conformance.** OGC APIs, STAC, WMTS, WMS, TileJSON, and MVT follow the relevant standards for the declared conformance classes the platform implements. Several optional classes are deliberately not exposed — WMS `GetFeatureInfo` and SLD styling are omitted from the WMTS/WMS proxy; OGC Features Transactions are typically omitted (the editing pipeline is the write surface, not WFS-T); STAC item search is collection-level only in this prototype (per-feature access is via OGC Features, per-COG access via Coverages or raster tiles). Clients that exercise only the conformance classes the platform declares should work with other implementations of the same classes.

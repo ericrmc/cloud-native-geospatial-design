@@ -210,9 +210,9 @@ The platform's role is to **host, secure, serve, and edit spatial data** at orga
 
 | What you get | Status | Notes |
 |---|---|---|
-| Pay for what you use, not for idle capacity | Met | Costs scale with traffic; when a service isn't being called, it isn't being paid for. |
+| Pay for what you use, not for idle capacity | Met | Costs scale with traffic. Lambda-backed services charge per invocation and cost nothing when idle; container-backed services in `minimal` mode keep one warm task at a few dollars per month each. See [12 Deployment](12_DEPLOYMENT.md). |
 | Predictable cost as adoption grows | Met | Per-request pricing; no per-seat licensing. |
-| Low cost when traffic is low (out-of-hours, weekends, project gaps) | Met | Services scale to zero when idle. |
+| Low cost when traffic is low (out-of-hours, weekends, project gaps) | Met | Idle deployments pay for storage and registry minimums plus a small per-service warm-task allowance — typically single-digit dollars per month for a development environment. |
 | Lower ongoing cost than a heavy database-backed GIS stack | Met | The platform's design specifically targets this; the cost case is summarised in [content/index.md](index.md#the-economic-case) and supported by the comparisons in [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md). |
 | Avoid paying for fixed cloud-network bridges that idle most of the day | Met | The platform routes internal traffic via private endpoints rather than paid network gateways; this avoids a real per-zone monthly line item. |
 | Cost transparency per project, team, or tenant | Partial | Cost can be tagged and attributed using standard cloud cost tooling; a built-in per-tenant cost view is not provided. |

@@ -8,7 +8,7 @@ The decisions are grouped by the area they primarily affect.
 
 Six major shifts during the prototype's life shape the rest of the decisions:
 
-1. **Aurora PostgreSQL + pgSTAC was deployed, then removed.** The original design used Aurora Serverless v2 PostgreSQL with PostGIS and pgSTAC. Maintaining an always-on database for what turned out to be a serving workload was an order of magnitude more expensive than necessary, and the database became the single point of failure for scale-to-zero. The whole spatial-data layer was moved to S3-native formats (PMTiles, GeoParquet, COGs) and the database was deleted entirely. This is the headline lesson; D1 below codifies it.
+1. **Aurora PostgreSQL + pgSTAC was deployed, then removed.** The original design used Aurora Serverless v2 PostgreSQL with PostGIS and pgSTAC. Maintaining an always-on database for what turned out to be a serving workload was an order of magnitude more expensive than necessary, and the database became the single point of failure for the cost-when-idle story. The whole spatial-data layer was moved to S3-native formats (PMTiles, GeoParquet, COGs) and the database was deleted entirely. This is the headline lesson; D1 below codifies it.
 2. **Vector tiles ran on Martin (Rust, PostgreSQL-backed), then on go-pmtiles.** Martin's PostgreSQL dependency conflicted with lesson 1; its PMTiles support required service restarts on file change. Replaced with go-pmtiles, which reads S3 directly and refreshes on ETag change. D5 codifies it.
 3. **STAC ran on Fargate with pgSTAC, then as a Lambda over DynamoDB.** Once the rest of the platform was off the database, pgSTAC was the last hold-out. Replaced with a small Lambda reading the DynamoDB datasets table. The registry *is* the catalogue.
 4. **OGC Features API ran on Fargate with its own DuckDB engine, then as a Lambda façade over GraphQL.** When the GraphQL query layer arrived, the Fargate Features service was refactored into a thin Lambda calling GraphQL so the spatial engine wasn't duplicated. The standalone-Fargate version was then deleted. D26 codifies both shapes as valid; the Lambda-standalone shape (over GeoParquet directly, without GraphQL) is the *recommended* starting point for OGC-only deployments.
@@ -45,11 +45,11 @@ The platform's positioning, in one line: **no GeoServer, no MapServer, no Postgr
 
 **Decision.** Vector features are queried as GeoParquet by DuckDB; vector tiles are served as PMTiles archives over S3 byte-range reads; raster is served as Cloud-Optimized GeoTIFFs and MosaicJSON descriptors in S3. No relational or document database holds spatial data in the read path.
 
-**Why.** Eliminates the largest fixed cost of a traditional geospatial platform (an always-on database with patching, backups, connection pooling, failover). Enables scale-to-zero. Makes durability a property of S3 (eleven nines), not the application. Aligns with a maturing ecosystem of tools that read these formats directly.
+**Why.** Eliminates the largest fixed cost of a traditional geospatial platform (an always-on database with patching, backups, connection pooling, failover). Brings idle cost close to zero. Makes durability a property of S3 (eleven nines), not the application. Aligns with a maturing ecosystem of tools that read these formats directly.
 
 > *In plain terms:* an idle deployment pays for storage and almost nothing else. The cost shape follows traffic, not the calendar.
 
-**Prior iteration.** The platform originally ran on **Aurora PostgreSQL Serverless v2 with PostGIS and pgSTAC**, deployed as an RDS stack with RDS Proxy. The minimum capacity floor (0.5 ACU ≈ \$43/month) and the operational weight of patching, backup, and Data API integration made scale-to-zero impossible. The whole database stack was deleted in favour of S3-native formats. The platform has not needed a database for spatial data since.
+**Prior iteration.** The platform originally ran on **Aurora PostgreSQL Serverless v2 with PostGIS and pgSTAC**, deployed as an RDS stack with RDS Proxy. The minimum capacity floor (0.5 ACU ≈ \$43/month) and the operational weight of patching, backup, and Data API integration made an idle-near-zero cost shape impossible. The whole database stack was deleted in favour of S3-native formats. The platform has not needed a database for spatial data since.
 
 **Trade-off.** No live SQL queries against spatial data. Updates are batch-oriented through the editing pipeline, not transactional INSERTs.
 
@@ -191,9 +191,9 @@ The platform's positioning, in one line: **no GeoServer, no MapServer, no Postgr
 
 **Decision.** Each service is parameterised by a scaling mode that controls task count and resource allocation. Mode `off` runs zero tasks; `minimal` runs one or two; `performance` runs many pre-warmed tasks with larger allocations.
 
-**Why.** A single deployment template supports demo-scale, development, and production workloads without code change. Scale-to-zero is the default for development; production picks the performance mode.
+**Why.** A single deployment template supports demo-scale, development, and production workloads without code change. `minimal` is the default for development; production picks the `performance` mode; `off` is available for demo and between-session use where 503-until-woken is acceptable.
 
-**Trade-off.** `off` mode incurs cold-start latency on first request. `performance` mode costs significantly more steady-state.
+**Trade-off.** `off` mode returns HTTP 503 until a task is woken (60–120 seconds). `performance` mode costs significantly more steady-state.
 
 ---
 

@@ -15,18 +15,18 @@ The cloud-native formats used:
 - **Cloud-Optimized GeoTIFF (COG)** for raster. Internally tiled, with overviews; readable by GDAL-class clients via HTTP range requests.
 - **MosaicJSON** for raster mosaics across many COGs.
 
-## 2. Scale-to-zero is a first-class concern
+## 2. Idle infrastructure should cost almost nothing
 
-The platform is expected to sit idle for extended periods between demos, dev cycles, and partner work. Every serving component must be able to run at zero capacity and start on demand. A platform with a \$400/month minimum is not the same product as a platform with a \$5/month minimum, even if their warm performance is identical.
+A platform with a \$400/month minimum is not the same product as a platform with a \$5/month minimum, even if their warm performance is identical. The platform is expected to sit idle for extended periods — out-of-hours, weekends, between demos, between project cycles — and during those periods it should cost very little to keep running. Costs rise with demand and fall away when demand is gone.
 
 This implies:
-- No always-on databases for spatial data.
-- **Fargate services** that can run at desired-count 0 and scale up on demand via ECS Service Auto Scaling.
-- **AWS Lambda** for lightweight handlers (auth, discovery, write coordination) where pay-per-invocation matches usage shape.
-- **CloudFront** edge caching that absorbs steady-state traffic so back-end services can stay cold.
+- No always-on databases for spatial data. Storage and metadata services charge per byte or per request, not per hour.
+- **AWS Lambda** for lightweight handlers (auth, discovery, write coordination) where pay-per-invocation matches usage shape. Lambda is genuinely zero-cost when idle and wakes transparently on the next request.
+- **Fargate services** that can run at desired-count 0 (fully off, charging nothing) or `minimal` (one warm task per service at a few dollars per month). The lower bound is a deployment choice: `off` saves the most but means the first request after idle waits 60–120 seconds for a task to start; `minimal` keeps interactive paths warm at low cost. See [12 Deployment](12_DEPLOYMENT.md) for the per-environment tradeoff.
+- **CloudFront** edge caching that absorbs steady-state traffic so back-end services see only a fraction of total requests.
 - **No NAT Gateways** where avoidable — VPC endpoints to S3 and DynamoDB instead, eliminating ~\$130/month per environment of always-on cost.
 
-Three explicit scaling modes are offered — *off*, *minimal*, *performance* — and the entire infrastructure is parameterised by them via AWS CDK context. See [12 Deployment](12_DEPLOYMENT.md).
+Three explicit scaling modes are offered — *off*, *minimal*, *performance* — and the entire infrastructure is parameterised by them via AWS CDK context. The economic case for the platform rests on this principle more than any other: a coherent serving platform that costs single-digit dollars per month when nothing is happening, and scales with demand when something is.
 
 ## 3. Standards at the edge, pragmatism inside
 
@@ -69,7 +69,7 @@ Where analytical or ETL workloads are needed, they belong in a separate system t
 
 User-initiated edits do not run inline with the HTTP request. Uploads land in object storage; a workflow engine orchestrates validation, tile generation, and promotion as discrete steps. The user gets a job identifier and watches it move through states.
 
-This decoupling is what makes scale-to-zero compatible with real edit work: the request layer can be cold and the pipeline can spin up containers only when there is work to do. It also makes reviewed editing natural — once an edit is decoupled from a request, inserting an approval step between validation and promotion is a state transition, not a re-architecture.
+This decoupling is what keeps the cost-when-idle story honest for real edit work: the request layer can be cold and the pipeline only spins up containers when there is work to do. It also makes reviewed editing natural — once an edit is decoupled from a request, inserting an approval step between validation and promotion is a state transition, not a re-architecture.
 
 See [11 Editing Pipeline](11_EDITING_PIPELINE.md).
 
@@ -103,4 +103,4 @@ The platform does **not**:
 - Provide collaborative real-time editing (edits are session-grouped, not concurrent).
 - Guarantee instantaneous permission revocation (revocation is eventual, on the order of seconds to minutes).
 
-Holding these non-goals firmly is what keeps the system small enough to operate at scale-to-zero cost while still doing its core job well.
+Holding these non-goals firmly is what keeps the system small enough to cost almost nothing when idle while still doing its core job well.
