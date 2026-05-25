@@ -51,8 +51,9 @@ QGIS (WMTS/WMS/OGC Features), ArcGIS (Esri adapter), any XYZ/MVT client — all 
 
 | If you are… | Start with | Then |
 |---|---|---|
-| An executive needing the shape | [01 Principles](01_PRINCIPLES.md), [02 Architecture](02_ARCHITECTURE.md) | [16 Design Decisions](16_DESIGN_DECISIONS.md) |
-| An architect planning a build | [01 Principles](01_PRINCIPLES.md) → [02 Architecture](02_ARCHITECTURE.md) → [04 Data Layout](04_DATA_LAYOUT.md) → [03 Authorisation](03_AUTHORISATION.md) | [16 Design Decisions](16_DESIGN_DECISIONS.md), [12 Deployment](12_DEPLOYMENT.md) |
+| An evaluator assessing whether the platform fits your needs | [19 Business Requirements](19_BUSINESS_REQUIREMENTS.md) | [01 Principles](01_PRINCIPLES.md), [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md) |
+| An executive needing the shape | [01 Principles](01_PRINCIPLES.md), [02 Architecture](02_ARCHITECTURE.md) | [19 Business Requirements](19_BUSINESS_REQUIREMENTS.md), [16 Design Decisions](16_DESIGN_DECISIONS.md) |
+| An architect planning a build | [01 Principles](01_PRINCIPLES.md) → [02 Architecture](02_ARCHITECTURE.md) → [04 Data Layout](04_DATA_LAYOUT.md) → [03 Authorisation](03_AUTHORISATION.md) | [16 Design Decisions](16_DESIGN_DECISIONS.md), [12 Deployment](12_DEPLOYMENT.md), [19 Business Requirements](19_BUSINESS_REQUIREMENTS.md) |
 | An implementer of the read path | [04 Data Layout](04_DATA_LAYOUT.md), [05 Vector Tiles](05_VECTOR_TILES.md), [06 OGC Features API](06_OGC_FEATURES_API.md) | [08 Raster](08_RASTER_SERVICES.md), [09 Routing](09_ROUTING.md), [10 Discovery](10_DISCOVERY.md) |
 | An implementer of the query layer | [07 Query Layer](07_QUERY_LAYER.md) | [04 Data Layout](04_DATA_LAYOUT.md), [09 Routing](09_ROUTING.md) |
 | An implementer of editing | [11 Editing Pipeline](11_EDITING_PIPELINE.md) | [04 Data Layout](04_DATA_LAYOUT.md), [03 Authorisation](03_AUTHORISATION.md) |
