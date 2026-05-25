@@ -27,6 +27,7 @@ The substance lives in `content/`:
 - `18_LAKEHOUSE_INTEGRATION.md` — reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose
 - `19_BUSINESS_REQUIREMENTS.md` — functional and non-functional requirements with status (met / partial / planned / adjacent / out of scope), for evaluating platform fit
 - `20_GLOSSARY_AND_REFERENCES.md` — every term, format, service, standard, library, and peer geospatial stack named in the corpus, with canonical URLs
+- `PROTOTYPE_STATUS.md` — handover snapshot of the prototype codebase: what code exists today, in what state, with known gaps and orphaned components; dates faster than the rest of the corpus
 
 ## Running locally
 

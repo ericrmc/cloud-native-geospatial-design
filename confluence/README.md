@@ -32,7 +32,7 @@ confluence/
    python3 push.py
    ```
 
-3. **Edit and update** — modify the Markdown in `../content/` (or `../private/intro-letter.md` for the Confluence-only intro), then:
+3. **Edit and update** — modify the Markdown in `../content/`, then:
    ```sh
    python3 convert.py && python3 push.py
    ```
@@ -124,13 +124,9 @@ push.py writes its page-id mapping to a **per-(host, space) state file** — `st
 | External links                        | `<a href="...">...</a>`                                          |
 | Horizontal rules                      | `<hr/>`                                                          |
 
-## Public vs Confluence intro
+## Intro source
 
-`content/index.md` (the public Quartz homepage) is a sanitised version of the introduction with department references, the specific dollar figure, and the departure note removed.
-
-`private/intro-letter.md` is the personal version intended for the Confluence space — same structure, retains all the context.
-
-`convert.py` reads from `content/` by default. A `SOURCE_OVERRIDES` mapping at the top of `convert.py` swaps in `private/intro-letter.md` as the source for `index.xml`. This means a single `python3 convert.py` invocation always produces the Confluence-appropriate intro; the Quartz site is independent and never sees the personal version.
+The Confluence root page and the Quartz homepage share the same source — `content/index.md`. `convert.py` produces `index.xml` from it directly. A `SOURCE_OVERRIDES` mapping at the top of `convert.py` exists for the case where an audience-specific override is wanted (the project previously used it to source a personalised intro from `private/`); it is empty by default.
 
 ## Mermaid diagrams: pre-rendered to images
 

@@ -86,6 +86,7 @@ QGIS (WMTS/WMS/OGC Features), ArcGIS (Esri adapter), any XYZ/MVT client — all 
 | 18 | [Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md) | Reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose |
 | 19 | [Business Requirements](19_BUSINESS_REQUIREMENTS.md) | Functional and non-functional requirements the platform fulfils, with status (met / partial / planned / adjacent / out of scope) — for fit evaluation |
 | 20 | [Glossary and References](20_GLOSSARY_AND_REFERENCES.md) | Reference index — every term, format, service, standard, library, and peer geospatial stack named across the documentation, with canonical URLs |
+| — | [Prototype Status Manifest](PROTOTYPE_STATUS.md) | Handover snapshot — what code exists today in the prototype repository, in what state, with known gaps and orphaned components. Dates faster than the rest of the corpus. |
 
 ## AWS as the reference platform
 

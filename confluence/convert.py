@@ -60,9 +60,7 @@ DIAGRAM_BACKGROUND = "white"
 # Keys are content filenames (relative to content/). Values are paths to the
 # preferred source file. If the override file does not exist, the original
 # content/ source is used.
-SOURCE_OVERRIDES = {
-    "index.md": PRIVATE_DIR / "intro-letter.md",
-}
+SOURCE_OVERRIDES: dict[str, "Path"] = {}
 
 ATTR_QUOTE = {'"': "&quot;"}
 
