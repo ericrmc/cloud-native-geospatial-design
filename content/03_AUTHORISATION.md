@@ -4,6 +4,27 @@ A single authorisation layer sits between every request and every backend. It is
 
 This document specifies the authorisation model, the algorithm, and the contracts.
 
+## Request flow at a glance
+
+Every request takes the same path: through the CDN, through API Gateway, through the Lambda authoriser, and on to the backend with a trusted permission context attached. The authoriser checks the credential against the policy store and decides what the request is allowed to see; the backend filters accordingly and the response returns through the CDN.
+
+```mermaid
+flowchart LR
+    CLIENT["Client"]
+    CDN["CloudFront CDN"]
+    APIGW["API Gateway"]
+    AUTH["Lambda Authoriser"]
+    DB[("Policies DB")]
+    BE["Backend Services"]
+
+    CLIENT --> CDN --> APIGW --> AUTH
+    AUTH -- "JWT or API Key" --> DB
+    AUTH -- "allowed datasets,<br/>role + claims" --> BE
+    BE -- "filtered response" --> CDN
+```
+
+The rest of this document specifies how each step works: how identity is resolved, how permissions are computed, what headers the backend receives, and what happens when something is missing or invalid.
+
 ## Identity sources
 
 Two credential types are accepted:
