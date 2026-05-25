@@ -1,46 +1,34 @@
 # Cloud-Native Geospatial Reference Architecture
 
-*Compiled May 2026 — see [Timeline and currency](00_INDEX.md#timeline-and-currency) on the document index for the dating context.*
+This is a reference architecture for a cloud-native spatial platform: a complete design for storing, managing, securing, serving, and editing spatial data consistently across an organisation.
 
-Some time ago I was asked what could be done to reduce cost pressure, ease the maintenance burden carried by spatial teams, address the data silos that grow up across project-specific platforms, improve access security, and make spatial data delivery faster and more reliable.
+It was developed in response to a recurring set of questions about cost pressure, maintenance burden on spatial teams, data silos across project-specific platforms, access security, and the speed and reliability of spatial data delivery. Those concerns are treated together here because, in practice, they are connected — different symptoms of the same underlying platform challenge.
 
-This work is my answer.
-
-The work is a cloud-native spatial platform reference architecture. In simpler terms, it is a complete design for a modern platform that can store, manage, secure, serve, and edit spatial data in a more consistent way across an organisation.
-
-It addresses the original asks together because, in practice, they are closely connected. Cost, maintenance, security, performance, and data fragmentation are not separate problems. They are different symptoms of the same underlying platform challenge.
-
-The artefact is a nineteen-chapter set of design documents. It is written to stand on its own. The prototype that informed it is not being handed over as a production system. It was valuable as a way to test ideas, but it was not production-reviewed and should not be treated as a deployable asset. What is offered is the design, the reasoning behind it, the options that were tested and rejected, and the lessons learned along the way.
+The artefact is a nineteen-chapter set of design documents, written to stand on its own. A prototype informed the design but is not being handed over as a production system; it was a way to test ideas, not a deployable asset. What is offered is the design, the reasoning behind it, the options that were tested and rejected, and the lessons learned along the way.
 
 ## How the work was developed
 
-I did not approach this as a traditional requirements-gathering exercise. I did not run a large workshop process, circulate surveys, or try to reconcile every existing request into a single backlog.
+The approach was to spend time in conversation with senior stakeholders, form a view about the kind of spatial platform likely to be needed over the longer term, and then build enough of that view to test whether it was realistic.
 
-Instead, I spent time in conversation with senior stakeholders, developed a view about the kind of spatial platform that was likely to be needed over the longer term, and then built enough of that view to test whether it was realistic.
-
-That approach was deliberate. There have been many opportunities for incremental improvement. What has not been on the table is a clear, worked-through position on what a simpler, lower-overhead, more secure, and more durable spatial platform could be.
-
-This work is offered as that position. It is not a demand that anyone immediately change direction. It is a stake in the ground that future investment, procurement, and architecture decisions can be measured against.
+Incremental improvement to existing systems has always been on the table. A clear, worked-through position on what a simpler, lower-overhead, more secure, and more durable spatial platform could look like has not. This work is offered as that position — a reference point against which future investment, procurement, and architecture decisions can be measured, rather than a call for immediate change in direction.
 
 ## What the documentation contains
 
-The design describes a platform that uses cloud storage as the primary foundation for spatial data, rather than relying on heavy database infrastructure for every read request. That choice is central to the cost and maintenance story.
+The design uses cloud storage as the primary foundation for spatial data, rather than relying on heavy database infrastructure for every read request. That choice is central to the cost and maintenance story.
 
-It also describes a single access-control layer across the platform, so that data can be reached securely and consistently rather than being split across many project-specific arrangements.
+A single access-control layer sits across the platform, so data is reached securely and consistently rather than through many project-specific arrangements.
 
-The design supports standard spatial interfaces, so that future systems, tools, and vendors can connect to it without anyone being locked into one narrow delivery pattern. It includes a model for reviewed editing, change history, data repair, and publication workflows. It also includes a worked example of a web mapping client to show how the platform could be used in practice.
+Standard spatial interfaces are supported throughout, so future systems, tools, and vendors can connect without anyone being locked into one delivery pattern. The design includes a model for reviewed editing, change history, data repair, and publication workflows, and a worked example of a web mapping client to show how the platform could be used in practice.
 
-Importantly, the documentation records the decisions behind the design. It documents earlier options that were tried and moved away from, including heavier database-led patterns, alternative serving components, public-facing infrastructure choices, and platform options that did not fit the work's needs. These are not abstract preferences. They are lessons from the work.
+The documentation also records the decisions behind the design — including earlier options that were tried and moved away from: heavier database-led patterns, alternative serving components, public-facing infrastructure choices, and platforms that did not fit. These are lessons from the work, not abstract preferences.
 
-It also includes a comparison of peer platforms and tools, so that future teams can see what was considered, what was rejected, and why. Some future possibilities are sketched as well, including better search, assisted data discovery, and more natural ways for users to ask questions of spatial data. Those ideas are clearly marked as future directions, not delivered components.
+A comparison of peer platforms and tools is included, so future teams can see what was considered and why. Some future possibilities are sketched as well — better search, assisted data discovery, and more natural ways for users to ask questions of spatial data — clearly marked as future directions rather than delivered components.
 
 ## What it is not
 
-This is not a complete solution ready to implement without further work. It cannot replace any existing platform on day one. It would need proper engagement with business users, technical teams, project owners, security, operations, and delivery partners before any adoption decision.
+This is not a complete solution ready to implement without further work, and it cannot replace any existing platform on day one. Proper engagement with business users, technical teams, project owners, security, operations, and delivery partners would be needed before any adoption decision.
 
-Some parts of the design are strong and well tested through the prototype. Other parts are designed but not yet tested in a production setting. Some sections are deliberately directional.
-
-This work is clear about those boundaries. That honesty is important. Anyone using the work should be able to see where the firm ground ends and where further validation would be needed.
+Some parts of the design are strong and well tested through the prototype. Others are designed but not yet tested in a production setting, and some sections are deliberately directional. The documentation is explicit about which is which, so anyone using the work can see where the firm ground ends and where further validation would be needed.
 
 ## The economic case
 
@@ -48,26 +36,24 @@ The cost case is one of the main reasons this work exists.
 
 Adopting the design at scale would require investment. A full transition needs capital funding to cover production hardening, migration planning and tooling, support for existing project teams, technical assurance, and the safety nets needed for a responsible transition.
 
-The longer-term operating position is very different. The systems this design is intended to simplify or replace currently carry significant ongoing costs in hosting, licensing, support, and operational complexity. The proposed architecture is designed to reduce those recurring costs substantially by using simpler cloud-native components that scale with demand rather than requiring heavy infrastructure to run continuously.
+The longer-term operating position is meaningfully different. The systems this design is intended to simplify or replace carry significant ongoing costs in hosting, licensing, support, and operational complexity. The proposed architecture reduces those recurring costs by using cloud-native components that scale with demand rather than requiring heavy infrastructure to run continuously.
 
-The investment case is therefore not only technical. It is financial and operational. The upfront cost is real, but the potential reduction in long-term cost and complexity is the strongest reason to take the work seriously.
+The investment case is therefore financial and operational as well as technical. The upfront cost is real; the reduction in long-term cost and complexity is the strongest reason to take the work seriously.
 
 ## Three ways to use the work
 
 There are three realistic ways an organisation could use this architecture.
 
-The first is to adopt it as a strategic platform direction. That would mean committing to a proper transition, funding the work, selecting candidate systems or datasets, and moving deliberately toward the target design. This option requires the most commitment, but it also offers the greatest long-term benefit.
+The first is to adopt it as a strategic platform direction — committing to a transition, funding the work, selecting candidate systems or datasets, and moving deliberately toward the target design. This option requires the most commitment and offers the greatest long-term benefit.
 
-The second is to adopt parts of it selectively. Individual capabilities, such as the access-control model, the data-serving pattern, the editing workflow, or the catalogue approach, could be applied to specific projects where the fit is strongest. This is likely to be the most practical near-term path. The design is intentionally modular, so that useful parts can be adopted without requiring the whole platform to be built at once.
+The second is to adopt parts of it selectively. Individual capabilities — the access-control model, the data-serving pattern, the editing workflow, the catalogue approach — can be applied to specific projects where the fit is strongest. The design is intentionally modular, so useful parts can land without requiring the whole platform to be built at once. This is likely to be the most practical near-term path.
 
-The third is to use it as a reference point. Even if no direct adoption follows, the design decisions, lessons learned, and platform comparisons can help shape future procurement, investment, and technical choices. It provides a defensible view of what good could look like in this domain, and a useful counterpoint when assessing vendor proposals or incremental uplift options.
+The third is to use it as a reference point. Even without direct adoption, the design decisions, lessons learned, and platform comparisons can shape future procurement, investment, and technical choices — a defensible view of what good could look like in this domain, and a useful counterpoint when assessing vendor proposals or incremental uplift options.
 
 ## Closing
 
-I worked hard on this, and I worked differently. I took responsibility for forming a view, testing it, documenting it, and leaving behind something that others could use.
-
-The work has mattered to me. I hope the technical architecture is useful — whether it becomes a platform direction, a source of reusable components, or simply a reference point for better decisions in the future.
+The intent of this work is to leave behind something others can use: a worked view, tested against a prototype, documented in enough depth to inform real decisions. Whether it becomes a platform direction, a source of reusable components, or a reference point for assessing future options, the value is in being concrete enough to argue with.
 
 ---
 
-**Read next:** [Document index and reading paths](00_INDEX.md) — chapter-by-chapter navigation, audience-keyed reading suggestions, the document catalogue, and notes on currency and dating.
+**Read next:** [Document index and reading paths](00_INDEX.md) — chapter-by-chapter navigation, audience-keyed reading suggestions, the document catalogue, and a note on currency.
