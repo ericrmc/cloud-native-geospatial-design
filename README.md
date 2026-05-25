@@ -1,6 +1,6 @@
 # Cloud-Native Geospatial Reference Architecture
 
-Vendor-ready design corpus for an AWS-native serverless geospatial platform: vector data, raster data, network routing, and reviewed editing, behind a single authorisation layer. Sixteen documents, ~4,900 lines, code-independent.
+Vendor-ready design corpus for an AWS-native serverless geospatial platform: vector data, raster data, network routing, and reviewed editing, behind a single authorisation layer. Twenty documents, ~5,300 lines, code-independent.
 
 Hosted as a [Quartz](https://quartz.jzhao.xyz/) site so the cross-references between principles, components, decisions, and journeys are navigable — graph view, backlinks, hover previews, full-text search.
 
@@ -25,7 +25,8 @@ The substance lives in `content/`:
 - `16_DESIGN_DECISIONS.md` — 30+ decisions with rationale and prior-iteration lessons
 - `17_FURTHER_DIRECTIONS.md` — sketched extensions worth exploring (semantic discovery, geocoding, point clouds, 3D, CV, multi-agent, field capture, reports, subscriptions, change detection, live data)
 - `18_LAKEHOUSE_INTEGRATION.md` — reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose
-- `19_GLOSSARY_AND_REFERENCES.md` — every term, format, service, standard, library, and peer geospatial stack named in the corpus, with canonical URLs
+- `19_BUSINESS_REQUIREMENTS.md` — functional and non-functional requirements with status (met / partial / planned / adjacent / out of scope), for evaluating platform fit
+- `20_GLOSSARY_AND_REFERENCES.md` — every term, format, service, standard, library, and peer geospatial stack named in the corpus, with canonical URLs
 
 ## Running locally
 

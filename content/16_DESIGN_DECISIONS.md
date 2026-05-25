@@ -21,7 +21,7 @@ These are the lessons that informed the decisions below. Where a decision exists
 
 ## Peer stacks and prior art
 
-The platform was designed in a landscape of standards-compliant geospatial stacks. Several were evaluated explicitly; the decisions that follow are easier to read with that context in hand. Canonical URLs for each are in [19 Glossary and References](19_GLOSSARY_AND_REFERENCES.md).
+The platform was designed in a landscape of standards-compliant geospatial stacks. Several were evaluated explicitly; the decisions that follow are easier to read with that context in hand. Canonical URLs for each are in [20 Glossary and References](20_GLOSSARY_AND_REFERENCES.md).
 
 | Stack | What it is | Relationship to this design |
 |---|---|---|

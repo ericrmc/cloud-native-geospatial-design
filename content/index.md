@@ -4,7 +4,7 @@ This is a reference architecture for a cloud-native spatial platform: a complete
 
 It was developed in response to a recurring set of questions about cost pressure, maintenance burden on spatial teams, data silos across project-specific platforms, access security, and the speed and reliability of spatial data delivery. Those concerns are treated together here because, in practice, they are connected — different symptoms of the same underlying platform challenge.
 
-The artefact is a nineteen-chapter set of design documents, written to stand on its own. A prototype informed the design but is not being handed over as a production system; it was a way to test ideas, not a deployable asset. What is offered is the design, the reasoning behind it, the options that were tested and rejected, and the lessons learned along the way.
+The artefact is a twenty-chapter set of design documents, written to stand on its own. A prototype informed the design but is not being handed over as a production system; it was a way to test ideas, not a deployable asset. What is offered is the design, the reasoning behind it, the options that were tested and rejected, and the lessons learned along the way.
 
 ## How the work was developed
 
