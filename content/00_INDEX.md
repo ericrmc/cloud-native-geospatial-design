@@ -10,18 +10,38 @@ A vendor-ready design artefact. It describes *what* the platform is, *why* each 
 
 The platform is positioned as **state-of-the-art serverless spatial computing**: cloud-native data formats served directly from object storage, scale-to-zero by default, with a coherent authorisation model and a reviewed editing pipeline. The audience is technical decision-makers, architects, and implementers.
 
-## What the platform does and does not do
+## What the platform does
 
-**Does:**
-- Serves vector tiles, vector features, raster tiles, and raster coverages from object-storage-native formats
-- Provides standards-compliant external interfaces (OGC API Features, OGC API Coverages, OGC WMTS/WMS, STAC, TileJSON, MVT)
-- Offers an optional rich query layer for spatial operations and network routing
-- Supports authenticated read and edit access, with row-level filtering driven by group claims
-- Manages reviewed edit sessions with delta and difference visualisation against authoritative datasets
-- Keeps per-row history for auditing
-- Issues and manages API keys for desktop GIS and programmatic clients
+### What it is
 
-**Does not:**
+A cloud-native platform that takes raw spatial data, converts it to optimised formats, and serves it through standard APIs — access-controlled and edge-cached. No GeoServer, no manual ETL.
+
+### Data onboarding
+
+Upload GeoJSON, GeoParquet, or reference imagery on S3. The platform validates, partitions, generates tiles, and promotes — automatically. Supports add, update, patch, delete, and full replace.
+
+### How data is served
+
+Vector tiles, raster tiles, WMTS/WMS (time-enabled), OGC Features, and OGC Coverages — all from S3. No database needed for serving.
+
+### Discovery
+
+A STAC catalogue lets users browse datasets and metadata, scoped to what they're allowed to see. Each dataset links to its available services.
+
+### Access control
+
+Every request is authorized before reaching any backend. Groups, roles (admin → viewer), API keys, and row-level security filter data based on user/group attributes. No separate views needed.
+
+### What's different from traditional GIS
+
+No per-layer GeoServer publishing, no manual ETL, no PostGIS required for serving. Serverless, scales to zero, centralised auth, automatic CDN invalidation, and a single catalogue across all services.
+
+### Client support
+
+QGIS (WMTS/WMS/OGC Features), ArcGIS (Esri adapter), any XYZ/MVT client — all via API key.
+
+## What the platform does not do
+
 - Run analytical workloads (no BI, no ad-hoc SQL surfaces for end users)
 - Transform or derive datasets through pipelines (no ETL framework, no scheduled transformations beyond data sync)
 - Provide live transactional spatial writes (no database-backed feature collections)
