@@ -82,7 +82,7 @@ QGIS (WMTS/WMS/OGC Features), ArcGIS (Esri adapter), any XYZ/MVT client — all 
 | 14 | [Client Integration](14_CLIENT_INTEGRATION.md) | QGIS, ArcGIS, web maps, programmatic clients |
 | 15 | [Map Client](15_MAP_CLIENT.md) | First-party React + MapLibre web app: catalogue, editing, review, GraphiQL, live pipeline link |
 | 16 | [Design Decisions](16_DESIGN_DECISIONS.md) | Standalone record of pivotal choices and trade-offs |
-| 17 | [Further Directions](17_FURTHER_DIRECTIONS.md) | Eleven sketched extensions — semantic discovery, geocoding, point clouds, 3D, computer vision, multi-agent orchestration, field capture, reports, subscriptions, change detection, live data |
+| 17 | [Further Directions](17_FURTHER_DIRECTIONS.md) | Twelve sketched capability extensions (semantic discovery, geocoding, point clouds, 3D, computer vision, agents, field capture, reports, subscriptions, change detection, live data, visual asset management) plus a production-hardening section covering DR drills, authoriser failure modes, and API contract evolution |
 | 18 | [Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md) | Reconciling the platform with a modern lakehouse (Delta, Iceberg, Databricks): where the boundary sits, what each side does well, and how they compose |
 | 19 | [Business Requirements](19_BUSINESS_REQUIREMENTS.md) | Functional and non-functional requirements the platform fulfils, with status (met / partial / planned / adjacent / out of scope) — for fit evaluation |
 | 20 | [Glossary and References](20_GLOSSARY_AND_REFERENCES.md) | Reference index — every term, format, service, standard, library, and peer geospatial stack named across the documentation, with canonical URLs |

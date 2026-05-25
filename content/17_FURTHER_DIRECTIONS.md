@@ -150,15 +150,55 @@ VAMS is also part of this platform's lineage. Its API-and-data-level access cont
 
 **What needs designing.** The integrate-vs-extend choice — different consequences for who owns the asset registry, who manages access, and whether visual assets share the dataset lifecycle (review, versioning, history) with vector and raster. Identity-passthrough between this platform's auth and VAMS's ABAC/RBAC if integrating. Storage of large binaries and their derivatives (cost shape diverges from Parquet-and-tile economics). Viewer surface — whether the existing map client (see [15 Map Client](15_MAP_CLIENT.md)) gains 3D plugins or a separate viewer ships alongside it.
 
+## 13. Production hardening
+
+The previous twelve sections sketch extensions to the platform's capability surface. This one is different: it lists the operational concerns a receiving team will want to plan for before standing the platform up for production-grade traffic. The prototype answers none of them today, by design — it is a prototype — but the receiving team should think through each before users that matter start depending on it.
+
+### Disaster recovery — tested, not just documented
+
+The recovery plan is described in [13 Operations](13_OPERATIONS.md): S3 versioning gives object-level recovery; DynamoDB point-in-time recovery covers the registry and policy tables; the stateless services restart from their container images. The plan is sound, but it has not been exercised end to end on the prototype.
+
+Before any production cutover, run a scripted DR drill in a sandbox — delete a dataset and restore from S3 versioning; corrupt the registry and restore from PITR; tear down a service and redeploy from CDK and confirm it serves correctly. The first drill will surface assumptions; the second will surface the runbook gaps; by the third the drill is a documented procedure rather than a hopeful plan. The same drill cadence applies for cross-region failover if multi-region DR becomes a requirement (it isn't, today).
+
+### Authoriser failure modes — a single layer needs a fallback story
+
+Every request flows through the Lambda authoriser. The design celebrates this — one place to enforce policy, one place to evolve the model — but it also means the authoriser is the platform's single point of failure for request authentication. The prototype assumes the authoriser is up.
+
+What needs designing for production is behaviour when the authoriser fails. Three options worth considering, each with different trade-offs:
+
+- **Fail closed** (deny all requests) — safest, but turns an authoriser outage into a full platform outage.
+- **Cached decisions on failure** — serve recently-seen credentials from the API Gateway authoriser cache for a bounded window; new credentials fail, existing sessions keep working.
+- **Tiered authorisers** — a minimal "is this a valid JWT?" fallback if the full authoriser is down keeps reads going but with reduced policy enforcement.
+
+None is universally right; the choice should be deliberate and documented before the first production deployment. A related concern is the blast radius of a bad authoriser deploy — a Lambda alias-based traffic-shifting deploy with an automatic rollback alarm is the standard pattern and would be cheap to add.
+
+### API contract evolution — what happens when a stable URL has to change
+
+The platform's URL contracts are deliberately stable (see [Principle 4](01_PRINCIPLES.md#4-modular-replaceable-components-behind-stable-url-contracts) and [02 Architecture](02_ARCHITECTURE.md)) — implementations behind a path can change; the path stays. This holds today because nothing has needed to break a contract. Eventually something will: an OGC standard publishes a v2, an authentication scheme deprecates, a per-collection response shape needs a new field that breaks a consumer.
+
+The prototype has no convention for this. Before production, an explicit answer is needed for:
+
+- **A versioning strategy.** URL-prefixed (`/v1/`, `/v2/`) is simplest and most operationally legible; header-based content negotiation is more elegant but harder to debug.
+- **A deprecation cadence.** How long does v1 stay live alongside v2? What notice goes to consumers? Where is the deprecation calendar published?
+- **A compatibility matrix per surface.** Which datasets, collections, or endpoints speak which version, and what does a client see if it asks for a version that isn't supported?
+
+The dataset lifecycle (active → deprecated → retired → archived) is already designed in [10 Discovery](10_DISCOVERY.md); the API lifecycle is the same shape applied to URL contracts.
+
+---
+
+These three warrant deliberate design work before production. Everything else in the design is at "wire it up and adjust" maturity rather than "stop and think first." Treat this section as a checklist for the first production-hardening sprint, not as a critique of what has been built.
+
 ## What is solid, what needs work
 
 To borrow the framing from [10 Discovery](10_DISCOVERY.md):
 
 **Solid.** None of it. Treat every section as a starting point.
 
-**Designed but not built.** All twelve. Each section is well enough thought through to brief an architect; none has had code written against it as part of this platform's prototype.
+**Designed but not built.** All twelve capability extensions (§§1–12). Each section is well enough thought through to brief an architect; none has had code written against it as part of this platform's prototype.
 
 **Where the work is heaviest.** The first three (semantic discovery, geocoding, point clouds) extend patterns and substrates the platform already uses — moderate effort, fits naturally. The middle three (3D, computer vision, agents) introduce new substrates with their own operational shapes. The last five (field capture, reports, subscriptions, change detection, live data) introduce new workflows with substantial product design work alongside the engineering. The twelfth (3D and visual asset management) shares this platform's substrate but introduces a different file ecosystem and the option of integrating a peer system (VAMS) rather than building from scratch — appended out of strict ease-of-fit order so the existing section numbering is preserved.
+
+**Production hardening (§13)** is a different category of work — not new capability, but the operational maturity any prototype needs before it carries real traffic. Treat it as the first sprint of a production cutover, distinct from the feature work above.
 
 These are doors, not roads. A future team reading this set should treat each section as a starting point — enough to spark a design conversation, not enough to commit to a build without one.
 
