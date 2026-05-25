@@ -1,393 +1,319 @@
 # 19 — Business Requirements
 
-This document lists the business and technical requirements the platform fulfils, expressed as evaluation criteria rather than acceptance tests. It is intended for teams considering whether the platform is a good fit for a project, programme, or replacement candidate — letting them check the platform's coverage of their needs before commissioning new bespoke systems.
+This document lists what the platform does, expressed as outcomes a project or programme might be looking for. It is intended for teams considering whether the platform is a good fit for a project, programme, or replacement candidate — letting them check coverage of their needs before commissioning a new bespoke system.
 
-It is not a roadmap, a contract, or a guarantee. It is a frank reading of what is in the design, what is in adjacent reach, and what is deliberately not the platform's role.
+It is not a roadmap, a contract, or a guarantee. It is a frank reading of what the platform delivers today, what is in adjacent reach, and what is deliberately not the platform's role.
 
 ## How to read the status column
 
 | Status | Meaning |
 |---|---|
-| **Met** | Explicitly designed and exercised through the prototype. Section references point to where the design is specified. |
-| **Partial** | Some aspects are met; others are not. Notes describe what is and what is not. |
-| **Planned** | Documented in [17 Further Directions](17_FURTHER_DIRECTIONS.md) as a sketched extension. Not built; the platform's substrate fits the requirement and a design has been outlined. |
-| **Adjacent** | Not explicitly designed, but the platform's architecture could absorb it without architectural change. Likely the smallest delta for a future team to add. |
-| **Out of scope** | Deliberately not in the platform's role. The architecture is shaped against this, and pursuing it would mean a different platform. Notes explain why and what alternative pattern fits better. |
+| **Met** | The platform delivers this today, designed and exercised through the prototype. Each row points to where the design is specified. |
+| **Partial** | Some of what's described is in place; some is not. Notes explain which is which. |
+| **Planned** | Sketched as a future direction in [17 Further Directions](17_FURTHER_DIRECTIONS.md). Not built; the platform's foundations fit it and an approach has been outlined. |
+| **Adjacent** | Not explicitly designed, but the platform can be extended to cover it without changing its overall shape. Usually the smallest delta for a future team to add. |
+| **Out of scope** | Deliberately not part of the platform's role. The architecture is shaped against doing this, and pursuing it would mean a different platform. Notes explain why and what a better fit looks like. |
 
-The platform is positioned as a **state-of-the-art serverless spatial platform** for hosting, securing, serving, and editing spatial data. Anything outside that framing — heavy analytics, transactional spatial writes, federated proxying, bespoke field tools — sits in *Adjacent*, *Planned*, or *Out of scope*.
+The platform's role is to **host, secure, serve, and edit spatial data** at organisation scale. Anything outside that — heavy analytics, transactional spatial writes, document management, bespoke field-collection apps — sits in *Adjacent*, *Planned*, or *Out of scope*.
 
 ---
 
 ## Functional requirements
 
-### 1. Data ingestion
+### 1. Discovering data
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Bulk vector upload (GeoParquet) | Met | Presigned S3 URL → validate → partition → tile → promote, fully automated. See [11 Editing Pipeline](11_EDITING_PIPELINE.md). |
-| Bulk vector upload (GeoJSON) | Met | Same pipeline as GeoParquet; converted on ingest. Practical size ceiling around 1–2 GiB before GeoParquet is recommended. |
-| Bulk vector upload (Shapefile, GeoPackage, KML) | Adjacent | Not natively supported. A small Lambda shim using GDAL/OGR converts to GeoParquet before the pipeline. Recommended pattern for legacy datasets. |
-| Feature-level edits (GeoJSON via Features API) | Met | Authenticated, attribute-aware, validated. See [11 Editing Pipeline](11_EDITING_PIPELINE.md). |
-| Raster ingest (Cloud-Optimised GeoTIFFs) | Met | COGs placed on S3 and registered via MosaicJSON; no in-platform reprocessing. See [08 Raster Services](08_RASTER_SERVICES.md). |
-| Raster ingest (non-COG TIFFs) | Adjacent | The platform expects COGs. A pre-conversion step (GDAL `gdal_translate -of COG`) is the recommended pattern. A managed conversion Lambda is sketched but not built. |
-| Reference-data ingest (no copy) | Met | Datasets can be registered against external S3 paths without copying. Useful for shared imagery archives. |
-| Format validation | Met | Schema, geometry validity, projection, attribute types checked before promotion. |
-| Schema enforcement | Met | Dataset-level schemas declared on registration; rejects on schema drift. |
-| Automatic conversion to optimised formats | Met | Vector → GeoParquet + PMTiles; raster expected as COG. |
-| Automatic spatial partitioning | Met | Hive-style `z=/x=/y=` partitioning on GeoParquet; tunable per dataset. See [04 Data Layout](04_DATA_LAYOUT.md). |
-| Delta-only ingest | Partial | Append-only writes with `DISTINCT ON (id)` dedup are supported. True change-set ingest (only new/changed rows from a remote system) is a client responsibility. |
-| Idempotent re-ingest | Met | Identical uploads produce no new rows; ingest pipeline keys on content + dataset version. |
-| Large file handling (multi-GiB) | Met | Fargate validation/generation tasks have ~200 GiB ephemeral storage; multi-part upload supported. |
-| Failed-upload recovery | Met | Step Functions retains failure context; partial artefacts cleaned up; resumption is by re-upload. |
-| Streaming ingest (Kafka, Kinesis) | Out of scope | The platform is a published-artefact serving platform, not a streaming sink. Live ingestion belongs in a streaming layer that lands batches into S3 for the platform to consume. |
-| Live transactional writes | Out of scope | No always-on database in the read path. Transactional spatial writes belong in PostGIS or a lakehouse-managed table; the platform's editing pipeline is reviewed-batch, not live-transactional. |
+| Browse every dataset the organisation has registered, in one place | Met | Single catalogue across vector, raster, routing, and reference data. See [10 Discovery](10_DISCOVERY.md). |
+| See only the datasets you're allowed to see | Met | The catalogue filters per user; you never see metadata for data you can't access. |
+| Read each dataset's description, owner, contact, extent, and last-updated date before requesting access | Met | Standard metadata captured at registration and visible on every dataset record. |
+| See a dataset's field structure (which fields exist, what types) before opening it | Met | Field metadata is exposed alongside the dataset record; this is what desktop GIS tools and the built-in editor use to render forms. |
+| Filter the catalogue by area, time, or known dataset identifier | Met | Standard catalogue search supports spatial extent, temporal extent, and collection or dataset id. |
+| Find datasets using natural-language questions ("show me road networks near the western corridor") | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md) using embeddings and a small language model over catalogue records. |
+| Discover datasets from outside catalogues (other agencies, partners) | Adjacent | The platform doesn't pull in remote catalogues today; a connector that harvests external catalogues into the local registry is a feasible extension. |
+| See the lineage of a dataset (where it came from, what it depends on) | Partial | Lineage fields are captured per dataset; a graphical lineage view is not built. |
+| See a preview of a dataset before opening it in a GIS tool | Met | The built-in web map client renders any registered dataset. See [15 Map Client](15_MAP_CLIENT.md). |
+| See deprecation notices and migrate to the named successor before a dataset is retired | Met | Datasets carry an explicit lifecycle (active → deprecated → retired → archived); deprecation notices and successor links appear in catalogue listings. See [10 Discovery](10_DISCOVERY.md). |
+| Get a clear "gone, here's the replacement" response when calling a retired dataset, instead of a generic error | Met | Retired datasets return an HTTP "Gone" response with the successor identifier, so client code can migrate deliberately rather than guess. |
 
-### 2. Data formats and storage
+### 2. Controlling who can see and change data
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Cloud-native formats throughout | Met | PMTiles, GeoParquet, COG, MosaicJSON. All readable directly from S3 via byte-range reads. |
-| Object storage as primary store | Met | S3 single bucket, prefix-organised. No primary database for spatial data. |
-| No always-on warm engines in read path | Met | The authoriser is on the path (single-digit ms, scale-to-zero compatible); after that, services read object storage directly. See [02 Architecture](02_ARCHITECTURE.md). |
-| Per-row history (SCD2) | Met | Append-only Parquet with valid-from/valid-to; vacuum compacts. See [11 Editing Pipeline](11_EDITING_PIPELINE.md). |
-| Soft-delete with audit trail | Met | Deletes write tombstone rows; original row remains queryable for history. |
-| Cross-dataset spatial joins at rest | Partial | DuckDB in the query layer joins across datasets, scoped to caller permissions. Joins across hundreds of millions of rows are CPU-bound and slow; bulk analytical joins belong in a lakehouse. See [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md). |
-| External-table federation | Out of scope | The platform owns its data. Federated query against external warehouses is a lakehouse pattern; the integration page describes how the two co-exist. |
+| Sign in with the organisation's existing identity provider (Entra ID, Okta, Google Workspace, etc.) | Met | The platform accepts logins from any standard corporate identity provider; users don't need a separate account. See [03 Authorisation](03_AUTHORISATION.md). |
+| Issue long-lived access credentials for desktop GIS tools and scripts | Met | Each person (or shared service account) can hold one or more keys, scoped to their own access. |
+| Grant access to a specific dataset to a specific person or team | Met | Per-dataset grants managed by dataset owners. |
+| Restrict what each person sees *within* a dataset based on their group, region, or project | Met | Common patterns: regional teams see only their region; projects see only their records; contractors see only what they've been engaged on. |
+| Let external partners or agencies each see only their own records in a single shared dataset | Met | A multi-tenant pattern — one shared dataset, many tenants, each tenant sees only their rows. The canonical example is a single asset register shared across regional councils. |
+| Cap any contractor's or partner's permissions to what HR or the identity provider has agreed, regardless of internal grants | Met | The identity provider's group membership sets a ceiling that platform grants cannot exceed. |
+| Issue a credential to a desktop GIS team that is read-only against a defined set of layers | Met | Group-scoped credentials inherit only the group's datasets at viewer access; useful for shared service accounts on shared workstations. |
+| Make a dataset publicly available without sign-in | Met | Per-dataset opt-in; everything else stays behind authentication. |
+| Let dataset owners manage their own access without involving a platform administrator | Met | Owners create groups, add members, and grant permissions on the datasets they own. |
+| Invite a new user by email and have their account set itself up on first sign-in | Met | The invitation carries the group memberships; they're active the moment the user signs in. |
+| Revoke a user's access | Met | Group removal or credential revocation takes effect within a few minutes everywhere. |
+| See an audit trail of who accessed what and when | Partial | Every access decision is recorded centrally; reviewing it today uses standard log-query tooling — a dedicated audit-search screen isn't built. |
+| Require multi-factor authentication for sensitive datasets | Adjacent | Configured at the identity provider, which already supports MFA; the platform inherits whatever the IdP enforces. |
+| Provision and de-provision users automatically from the HR or central identity system | Adjacent | Today the workflow is invitation-based. Automatic provisioning would replace that and is a feasible extension. |
+| Grant temporary elevated access ("break-glass") that expires automatically | Adjacent | Not built; today temporary access is a procedural process (grant, then revoke). |
+| Limit how many requests a single user or credential can make per minute | Adjacent | Platform-wide protection is in place; per-user quotas are configurable but not exposed as a self-service feature. |
 
-### 3. Vector data serving
+### 3. Loading and managing data
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Vector tiles (MVT via PMTiles) | Met | Served by go-pmtiles on Fargate, byte-range reads from S3, ETag-aware. See [05 Vector Tiles](05_VECTOR_TILES.md). |
-| OGC API Features | Met | GeoJSON responses, bbox + attribute filtering, pagination, conformance classes documented. See [06 OGC Features API](06_OGC_FEATURES_API.md). |
-| Filter by bounding box | Met | Pushed into Parquet predicate pushdown; chunks outside bbox skipped at read time. |
-| Filter by attribute | Met | Parquet column predicates pushed down where the column is partitioned or has min/max statistics. |
-| Pagination of feature responses | Met | Cursor-based, stable across requests. |
-| TileJSON / capabilities documents | Met | Per dataset; published for both PMTiles and OGC Features. |
-| Vector style hints | Partial | Tile metadata carries layer schema; style suggestions are documented per dataset but not auto-generated. Recommended layer styles can be hand-published per dataset. |
-| Multi-zoom support | Met | PMTiles archives carry the full zoom pyramid; tile generation tunes min/maxzoom per dataset. |
-| Server-side label generation | Out of scope | Labels are a client-side rendering concern. The platform serves geometry + attributes; clients (MapLibre, ArcGIS, QGIS) apply label rules. |
+| Upload a new dataset from a file | Met | The platform validates, organises, prepares maps, and publishes — without manual intervention. See [11 Editing Pipeline](11_EDITING_PIPELINE.md). |
+| Onboard datasets from common spatial file formats (GeoParquet, GeoJSON) | Met | Standard upload pathway; no conversion required first. |
+| Onboard datasets from legacy spatial formats (Shapefile, GeoPackage, KML) | Adjacent | A small conversion step using standard tools turns these into a supported format. A managed conversion service is a feasible extension. |
+| Register an existing imagery archive without copying it into the platform | Met | Reference-only datasets point at the existing storage location; no duplication. |
+| Onboard aerial or satellite imagery as map layers | Met | The platform serves cloud-optimised imagery directly from storage; ingestion is registration only. See [08 Raster Services](08_RASTER_SERVICES.md). |
+| Add new monthly or annual imagery captures incrementally to an existing archive | Met | Time-keyed mosaic descriptors let new captures land alongside older ones; older captures remain addressable by date. |
+| Onboard elevation data | Met | Same path as imagery; elevation is served as a coverage. |
+| Have the platform check uploads for format errors, missing fields, or invalid geometry | Met | Validation runs before any data is published; errors are reported back. |
+| Have the platform enforce a dataset's schema (rejecting uploads that drift from it) | Met | Schema declared at registration; ingest enforces it. |
+| Re-upload the same dataset without duplicating rows | Met | Idempotent ingestion; identical uploads produce no new rows. |
+| Upload large datasets (multiple gigabytes) | Met | Multi-part upload supported; ingestion has ample working storage. |
+| Recover gracefully from a failed upload | Met | Failure context is retained; partial artefacts are cleaned up; re-uploading resumes safely. |
+| Ingest data from a live stream (Kafka, Kinesis) | Out of scope | The platform is built around published datasets and reviewed change, not live streams. A streaming layer that batches into the platform is the recommended pattern. |
+| Make changes to data and have them go live instantly without review | Out of scope | The platform's value is in reviewed, auditable change. Live transactional writes belong in a different kind of system. |
 
-### 4. Raster data serving
+### 4. Editing and reviewing changes
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Raster tiles (PNG/WebP) | Met | titiler-style Fargate service reads COGs via MosaicJSON, returns tile bytes. See [08 Raster Services](08_RASTER_SERVICES.md). |
-| WMTS interface | Met | Standards-compliant; usable from QGIS and ArcGIS directly. |
-| WMS interface | Met | Provided for legacy clients. |
-| Time-enabled raster (mosaic-of-time) | Met | MosaicJSON manifests scoped by acquisition date; clients pass time dimension. |
-| OGC API Coverages | Met | Elevation and continuous-field rasters exposed as coverages. |
-| Multi-band raster (3+ bands) | Met | Band combination expressions evaluated at tile-render time; common indices (NDVI etc.) presetable per dataset. |
-| Reprojection on the fly | Partial | Limited; the platform serves in the tile-pyramid CRS (typically Web Mercator). Other CRSes are reprojected at the WMS layer with quality caveats. Heavy reprojection workloads belong upstream of ingest. |
-| Server-side rendering with styling | Partial | Default colour ramps and stretches provided per dataset; custom render styles per request supported via render parameters. Complex cartography is a client responsibility. |
-| Vector overlays burnt into rasters | Out of scope | Composite render is a client capability. The platform serves raster and vector independently; the client composes. |
+| Make changes to a dataset and submit them for review before they go live | Met | Edit sessions hold changes; nothing is published until reviewed. See [11 Editing Pipeline](11_EDITING_PIPELINE.md). |
+| Edit features one at a time through a map interface | Met | Built-in web client supports feature-level edits. See [15 Map Client](15_MAP_CLIENT.md). |
+| Make bulk changes (update many records at once) | Met | A bulk editing surface supports adding, modifying, or removing many records in a single session. |
+| Let data managers fix data at scale (e.g. backfill a new mandatory field across millions of rows) through the same reviewed pipeline as any other edit | Met | Bulk operations are routed through validation and review, not run as out-of-band scripts. |
+| Have the platform queue same-dataset edits so two editors don't corrupt each other's work | Met | Submissions to the same dataset are queued and run cleanly in order; genuine record-level conflicts are flagged at submission. |
+| Define organisation-specific data quality rules and apply them automatically on every edit | Met | Per-dataset validation rules run on every edit; some block submission, others issue warnings to the reviewer. |
+| See what's changed before approving (additions, modifications, deletions visualised on the map) | Met | Reviewers see a colour-coded delta against the current authoritative dataset. |
+| Preview an editor's draft overlay on the live map before approving | Met | Draft tiles render alongside live tiles so reviewers can see the proposed change in context. |
+| Be warned before applying a schema change that would invalidate existing rows | Met | The platform detects breaking schema changes and refuses to apply them unless explicitly forced, with guidance on the data fix needed first. |
+| Approve and publish changes in a single action | Met | Once approved, changes go live; consumers see the new version on their next request. |
+| Detect when two editors have changed the same record, and surface the conflict at submission rather than silently overwriting | Met | The second submission sees the conflict, the editor resubmits with the conflict resolved. No automatic merge tool. |
+| Add new columns to an existing dataset | Met | Schema additions are supported. |
+| Restructure a dataset's schema (rename columns, change data types) | Met | Supported via schema edits with breaking-change detection; the platform refuses dangerous changes unless the data is brought into line first. |
+| Roll back to a previous version of a dataset | Met | Whole-dataset revert is supported as a reviewed edit. |
+| Capture and edit data offline in the field, syncing later | Planned | Field-capture workflow is sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
 
-### 5. Network routing
+### 5. Tracking history and audit
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Point-to-point routing | Met | Valhalla, exposed via GraphQL on the query layer. See [09 Routing](09_ROUTING.md). |
-| Drive-time isochrones | Met | Valhalla isochrone endpoint wrapped as GraphQL. |
-| Map matching (GPS traces to roads) | Met | Valhalla `trace_attributes` wrapped as GraphQL. |
-| Snap-to-road | Met | Valhalla `locate` wrapped as GraphQL. |
-| Multi-mode travel costs (car, bike, pedestrian) | Met | Valhalla profiles selectable per request. |
-| Public transport routing | Adjacent | OpenTripPlanner is the recommended substitute for transit; the routing slot in the platform is profile-based and could host OTP alongside or instead of Valhalla. Not currently built. |
-| Time-dependent routing (traffic, closures) | Adjacent | Valhalla supports time-of-day costing on historical traffic tiles; the platform's graph build does not currently include traffic. A traffic-ingest pipeline would be additive. |
-| Multi-modal routing (drive + walk + transit) | Adjacent | Engine choice and graph composition required; out of the box not provided. |
-| Custom routing profiles (heavy vehicles, hazmat) | Partial | Valhalla supports truck profiles natively; the platform exposes them via GraphQL. Custom-cost profiles (height/weight/hazmat overlays) are configurable but require graph rebuild. |
-| Geocoding | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). Pelias is the recommended substrate. |
-| Reverse geocoding | Planned | Same sketch as geocoding. |
+| See who changed which record, when, and what the value was before and after | Met | Per-record history with attribution, retained for the life of the dataset. See [11 Editing Pipeline](11_EDITING_PIPELINE.md). |
+| Get a clear record of every edit session: who submitted it, who reviewed it, when it went live | Met | Submitter, reviewer, timestamps, and a payload summary are recorded per session; the dataset event log holds the durable record. |
+| Require that the person approving a change is not the person who made it (four-eyes) | Met | Submitter and reviewer are recorded distinctly and constrained to be different. |
+| View a dataset as it was on any past date | Met | Time-travel queries return the dataset as of any historical timestamp. |
+| Compare two versions of a dataset side by side | Partial | The reviewer flow compares an in-progress edit against the live version using the same overlay rendering; one-click comparison of any two arbitrary historical versions is not exposed as a feature. |
+| Revert an individual change without reverting everything since | Adjacent | The history primitives support this — a cherry-pick is a small edit submitted against an earlier row version — but it is not exposed as a one-click revert in the built-in client. |
+| Get a cryptographic guarantee that a historical record hasn't been altered | Out of scope | Not the platform's role. If required, the assertion layer sits above the catalogue (e.g. a separate notarisation service). |
 
-### 6. Spatial query and analysis
+### 6. Serving data to users and applications
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Spatial predicates (intersects, contains, within, disjoint) | Met | DuckDB Spatial executes these against GeoParquet. Exposed via GraphQL. See [07 Query Layer](07_QUERY_LAYER.md). |
-| Distance and nearest-neighbour | Met | DuckDB Spatial; results stream as GeoJSON. |
-| Buffer and other geometry construction | Met | DuckDB Spatial geometry functions; exposed as GraphQL fields. |
-| Aggregation queries (count by region, sum within polygon) | Met | DuckDB SQL aggregation against GeoParquet. |
-| Cross-dataset joins | Partial | Supported up to mid-millions of rows; bulk warehouse-scale joins belong in a lakehouse. |
-| Programmatic SQL access | Adjacent | The query layer is GraphQL, deliberately. Direct SQL access is not exposed externally to keep the contract stable and the surface area small. A read-only DuckDB-over-HTTP shim would be the smallest add. |
-| BI dashboard back-end (Tableau, Power BI, Superset) | Out of scope | These tools want JDBC/ODBC or warehouse SQL. The platform is a serving platform, not a BI back-end. See [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md) for the right pattern. |
-| Ad-hoc end-user SQL surface | Out of scope | Same as above; query layer is GraphQL by design. |
+| Show data on interactive web maps to many users at once | Met | Map tiles served from a global edge network; fast and predictable under any load. See [05 Vector Tiles](05_VECTOR_TILES.md). |
+| Show satellite or aerial imagery on the same maps | Met | Raster tiles served the same way. See [08 Raster Services](08_RASTER_SERVICES.md). |
+| Show how a layer has changed over time (time slider) | Met | Time-enabled raster services support this directly. |
+| Make individual records available to applications (one at a time, or in filtered queries) | Met | Standard feature-query interface; filter by area, attribute, or both. See [06 OGC Features API](06_OGC_FEATURES_API.md). |
+| Make elevation, sea-surface, or other continuous data available to scientific applications | Met | Standard coverages interface; clients pull the data they need for the region and time of interest. |
+| Get the same fast response anywhere in the world (global edge caching is part of standard delivery) | Met | The edge layer absorbs repeat requests close to the user. |
+| Embed maps in third-party applications and dashboards | Met | Standard interfaces work in any web framework or BI tool that accepts a standard map tile URL. |
+| Push notifications to clients when data changes (server-sent) | Out of scope | The architecture is request/response. Clients poll a cheap "last-changed" check; long-lived push connections aren't supported by design. |
 
-### 7. Discovery and catalogue
+### 7. Spatial analysis and routing
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| STAC API | Met | Lambda-backed, reads from the DynamoDB datasets registry. See [10 Discovery](10_DISCOVERY.md). |
-| Catalogue API (richer admin metadata) | Met | Policy API `/rest/datasets/*` routes; per-caller filtering. |
-| Per-user catalogue filtering | Met | The catalogue is always scoped to what the caller is allowed to see. Anonymous callers see public datasets only. |
-| Dataset metadata (provenance, schema, extents, lineage) | Met | Schema, spatial extents, temporal extents, owner, contact, licence captured at registration. |
-| Asset linking to serving endpoints | Met | Each dataset record carries links to its tile, feature, raster, or coverage endpoints. |
-| Full-text dataset search | Partial | Substring matching on titles and descriptions is supported. Semantic search (embeddings, natural language) is planned. |
-| Faceted browse (by tag, owner, theme) | Partial | Tag and owner facets supported; advanced faceting (e.g. by lineage, by upstream system) requires schema extension. |
-| Natural-language dataset discovery | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md) — embeddings + a small LLM over catalogue records. |
-| External catalogue harvesting (CSW, ISO 19115) | Adjacent | The platform does not federate external catalogues. A harvester Lambda writing into the registry is the recommended pattern. |
-| Lineage graph visualisation | Adjacent | Lineage fields are captured; a graph-rendering surface is not built. |
+| Find features in an area (e.g. all assets within a polygon) | Met | Spatial query interface returns matching features. See [07 Query Layer](07_QUERY_LAYER.md). |
+| Find features near a point, with distance ranking | Met | Nearest-neighbour queries supported. |
+| Count or summarise features within an area | Met | Aggregation queries supported. |
+| Combine data from two or more datasets in a single query | Partial | Joins across moderate-sized datasets are supported. Very large analytical joins belong in a lakehouse alongside the platform. See [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md). |
+| Calculate driving, cycling, or walking routes between points | Met | Routing service with multiple travel modes. See [09 Routing](09_ROUTING.md). |
+| Calculate drive-time catchment areas (isochrones) | Met | Standard isochrone outputs. |
+| Calculate travel time / distance matrices between many origins and destinations in a single call | Met | Matrix operation exposed via the routing service. |
+| Match recorded GPS traces back to the road network | Met | Map-matching service. |
+| Chain several spatial operations in one request (e.g. drive-time → intersect with parcels → save the result) | Partial | Composition primitives exist in the design; the prototype is honest that this is "designed but under-tested" at this stage. |
+| Save the output of a spatial analysis as a new layer that colleagues can render | Partial | A save primitive exists in the prototype; hardening it to go through the standard review pipeline is on the to-do list. |
+| Route public transport trips | Adjacent | The routing service is profile-based; the public-transport engine (OpenTripPlanner) can be added alongside or instead of the driving engine. |
+| Route with live traffic | Adjacent | The traffic data feed would be the addition; the engine supports time-of-day costing. |
+| Convert an address to a coordinate (geocoding) | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Power a BI dashboard with ad-hoc SQL queries against spatial data | Out of scope | The platform is built for serving, not for analytics workloads. A lakehouse is the right tool; [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md) describes how they coexist. |
 
-### 8. Authorisation and identity
+### 8. Connecting to existing tools
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Centralised authorisation across all services | Met | Single Lambda authoriser in front of every backend. See [03 Authorisation](03_AUTHORISATION.md). |
-| OIDC / JWT support | Met | Trusted-issuers list; signature, expiry, issuer, audience all validated. |
-| Cognito as default IdP | Met | First-sign-in trigger converts invitations into memberships. |
-| External IdP federation (Entra ID, Auth0, Okta, Google) | Met | Configured via trusted-issuers list. |
-| API keys | Met | SHA-256 hashed, owner-scoped, revocable. |
-| Role hierarchy (admin → editor → viewer) | Met | Documented in [03 Authorisation](03_AUTHORISATION.md). |
-| Group-based permissions | Met | Group memberships from the IdP or from platform-managed groups. |
-| Row-level security (RLS) | Met | Filter expressions per group, evaluated server-side against trusted headers. |
-| Dataset-level grants | Met | Read, write, admin grants per dataset, per group or per user. |
-| Anonymous / public access | Met | Explicit public-access opt-in per dataset. |
-| Audit logging of access decisions | Partial | Authoriser writes structured logs; a queryable audit surface is not built. Logs land in CloudWatch and can be exported to S3 + Athena. |
-| Per-credential rate limiting | Adjacent | API Gateway throttling is global; per-credential quotas are configurable but not exposed as a self-service surface. |
-| Multi-factor authentication | Adjacent | Cognito supports MFA; configuration is at the IdP, not the platform. |
-| Just-in-time access elevation | Adjacent | Not built. The model is static grants; temporary elevation is a procedural process. |
+| Open datasets in QGIS | Met | Standard map and feature interfaces; QGIS connects with an access credential. See [14 Client Integration](14_CLIENT_INTEGRATION.md). |
+| Open datasets in ArcGIS Pro and ArcGIS Online | Met | Same standard interfaces; ArcGIS connects via its built-in adapters. |
+| Connect to ArcGIS Enterprise Portal as a registered vector tile service | Met | A dedicated adapter exposes the platform's vector layers in the shape ArcGIS Enterprise expects. |
+| Use the data from any standards-compliant mapping or GIS tool | Met | The platform speaks the standard interfaces those tools expect. |
+| Query the data from Python, R, or JavaScript scripts | Met | Standard HTTP access with a credential; widely-used spatial libraries work directly. |
+| Read the data directly from object storage with analytics tools (DuckDB, BigQuery, Athena, Spark) | Met | The on-disk layout is designed for direct read by any modern analytical engine, with permissions enforced at the storage layer. |
+| Use the built-in web map client to browse, edit, and review | Met | First-party React + MapLibre client. See [15 Map Client](15_MAP_CLIENT.md). |
+| Explore the data programmatically with an interactive query tool | Met | Built-in GraphiQL surface, scoped to the user's permissions. |
+| Use the data on mobile devices | Adjacent | Standard HTTP clients work; no platform-supplied mobile SDK or app. |
+| Export data to common file formats (Shapefile, GeoPackage, KML) | Adjacent | Achievable today using standard conversion tools on the client side; a server-side export is a small addition. |
 
-### 9. User and group management
+### 9. Reporting and exports
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Self-service group creation | Met | Admins create groups, assign members, define grants. |
-| Email invitations | Met | First-sign-in trigger converts invitation tokens into memberships. |
-| API key lifecycle (issue, revoke, rotate) | Met | Self-service for owners; admin override available. |
-| Permission propagation latency guarantees | Met | Documented; authoriser cache TTL is the dominant factor (single-digit minutes). |
-| SCIM provisioning | Adjacent | Not implemented. For enterprise IdPs, group sync via SCIM would replace the invitation flow. |
-| Delegated administration | Partial | Dataset owners can grant access to their own datasets without platform-admin involvement. Sub-tenant administration (group admins) is not built. |
-| Service accounts | Met | API keys serve this role; no separate service-account abstraction. |
+| Export a dataset as a file for downstream use | Partial | Downloads of the platform's native formats work today; conversions to other formats are a client-side step. |
+| Take a snapshot of a map as a static image | Adjacent | Achievable by composing tiles client-side; no server-side image export. |
+| Generate a PDF report with maps and tables embedded | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Schedule report generation on a recurring basis | Planned | Same sketch. |
+| Produce print-quality cartographic layouts | Out of scope | Cartographic layout belongs in QGIS or a layout-product. The platform supplies the data; the layout tool composes the page. |
 
-### 10. Editing workflows
+### 10. Notifications and live updates
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Edit sessions | Met | Per-dataset, per-user; isolated working copies. See [11 Editing Pipeline](11_EDITING_PIPELINE.md). |
-| Per-dataset concurrency control | Met | Optimistic locking via DynamoDB conditional writes. |
-| Feature-level edits (web client, API) | Met | GeoJSON via Features API. |
-| Bulk SQL-based editing | Met | DuckDB-backed; supports `UPDATE`, `INSERT`, `DELETE` against the working copy. |
-| Validation before promotion | Met | Same validation as ingest; reviewer must clear all errors before promotion. |
-| Reviewer approval workflow | Met | Edit sessions submitted for review; reviewer sees delta + diff PMTiles. |
-| Delta and diff visualisation | Met | Pre-rendered tiles showing additions, modifications, deletions against the current authoritative dataset. |
-| Promote to authoritative | Met | Atomic; serving artefacts swapped server-side; clients see new tiles on next request via ETag refresh. |
-| Rollback / revert | Met | Cherry-pick revert from history; producing the inverse delta as an edit session. |
-| Concurrent edit conflict handling | Met | Conflicts surface at promotion; reviewer resolves before merge. |
-| Schema migration support | Partial | Adding columns is supported; renaming or restructuring requires a new dataset version. |
-| Offline editing | Planned | Field-capture sketch in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Get notified when a dataset you care about changes | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Send change events to other systems (webhooks) | Planned | Same sketch. |
+| Receive email alerts for dataset events | Planned | Same sketch. |
+| Power a real-time vehicle or sensor display | Planned | Polling pattern over fast-refreshing map tiles is the recommended approach; live feeds are sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Push updates to clients with sub-second latency | Out of scope | The platform is cache-friendly and request/response. Sub-second live data needs a streaming layer alongside, not inside, this platform. |
+| Send SMS or push notifications | Out of scope | Notification delivery channels are a generic concern; the platform should emit events, not own every delivery channel. |
 
-### 11. Audit and history
+### 11. Field and mobile work
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Per-row history (SCD2) | Met | Append-only Parquet; valid-from / valid-to ranges. |
-| Versioned datasets viewable side-by-side | Met | Any historical version queryable as a dataset. |
-| Time-travel queries | Met | Query the dataset as of any past timestamp. |
-| Edit attribution (who, when, what) | Met | Per-row, retained for the lifetime of the dataset history. |
-| Cherry-pick revert | Met | Single edits or whole sessions can be inverted as a new edit. |
-| Vacuum / compaction | Met | Scheduled Lambda compacts the append-only history to balance query speed and storage cost. |
-| Cryptographic provenance (signed assertions) | Out of scope | Not the platform's role. If required, the assertion layer sits above the catalogue. |
-| Per-attribute change log | Partial | History is per-row, not per-attribute. Per-attribute diff is computed at query time from row versions. |
+| Collect data on a mobile device in the field | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Continue working offline and sync when connectivity returns | Planned | Same sketch. |
+| Attach photos to features captured in the field | Planned | Same sketch; attachments addressable by feature. |
+| Generate a form for data entry based on a dataset's schema | Adjacent | The schema is available; rendering a form is a client concern. Standard form-builder integrations are achievable. |
 
-### 12. Client integration
+### 12. Detecting change and using intelligence
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| QGIS (WMTS, WMS, OGC API Features) | Met | API key passes via header; tested. See [14 Client Integration](14_CLIENT_INTEGRATION.md). |
-| ArcGIS (Esri WMTS/WMS adapter) | Met | Standards-compliant interfaces consumed natively. |
-| Any XYZ/MVT tile client (MapLibre, Mapbox GL JS, Leaflet) | Met | URL templates published in TileJSON. |
-| Programmatic Python access | Met | API key + standard HTTP libraries. DuckDB can read GeoParquet directly via signed URLs. |
-| Programmatic R access | Met | Via `sf`, `terra`, and standard HTTP libraries. |
-| Programmatic JavaScript / TypeScript access | Met | Via `fetch` + standard parsers. |
-| First-party React + MapLibre web client | Met | Catalogue browse, editing, review, GraphiQL exploration. See [15 Map Client](15_MAP_CLIENT.md). |
-| GraphiQL exploration surface | Met | Authenticated, scoped to caller permissions. |
-| OpenAPI specification | Partial | OGC endpoints publish OpenAPI 3.0 documents; the GraphQL surface has its own schema introspection. A consolidated cross-surface API document is not built. |
-| Mobile SDK (iOS, Android) | Adjacent | Standard HTTP clients work; no first-party SDK is provided. |
-| Desktop bulk export tool | Adjacent | GDAL/OGR with the platform's URLs works today; a dedicated export tool is not built. |
+| Detect changes between two dates of imagery | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Get alerted when a specific feature changes (e.g. a road I'm responsible for) | Adjacent | A combination of change subscriptions and the history system would deliver this; not built end to end. |
+| Extract features from imagery using computer vision | Planned | Substantial pipeline; sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Ask an AI assistant questions about the data ("which datasets cover this area?") | Planned | Aspirational postscript in [10 Discovery](10_DISCOVERY.md). |
 
-### 13. Reporting and outputs
+### 13. Working with 3D and visual assets
 
-| Requirement | Status | Notes |
+| What you can do | Status | Notes |
 |---|---|---|
-| Static map image export (PNG/JPEG) | Adjacent | Achievable by composing tiles client-side; no server-side export endpoint. |
-| Print-quality cartographic layouts | Out of scope | Cartographic composition belongs in QGIS or a layout-engine product. The platform supplies the data; the layout tool composes. |
-| PDF reports with embedded maps | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
-| Scheduled report generation | Planned | Same sketch — Step Functions + headless renderer. |
-| Data export as Shapefile / GeoPackage / KML | Adjacent | Achievable by client-side GDAL conversion from GeoParquet or GeoJSON. Server-side export shim is a small add. |
-
-### 14. Notifications and subscriptions
-
-| Requirement | Status | Notes |
-|---|---|---|
-| Dataset change subscriptions | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). EventBridge + per-subscription filter. |
-| Webhook notifications | Planned | Same sketch. |
-| Email alerts | Planned | Same sketch; SES integration. |
-| SMS or push notifications | Out of scope | Notification fan-out is a generic infrastructure concern; the platform should emit events, not deliver every channel. |
-| Server-Sent Events / WebSocket push | Out of scope | The architecture is request/response and CDN-cached. Long-lived push connections would require a stateful component the platform does not have. Polling against ETags is the recommended pattern. |
-
-### 15. Field capture
-
-| Requirement | Status | Notes |
-|---|---|---|
-| Mobile data collection | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
-| Offline editing with sync | Planned | Same sketch. |
-| Photo capture against features | Planned | Same sketch; S3 attachments addressable by feature ID. |
-| Form-based data entry | Adjacent | Schema is captured per dataset; rendering a form is a client concern. Standard form-builder integrations are achievable. |
-
-### 16. Change detection and intelligence
-
-| Requirement | Status | Notes |
-|---|---|---|
-| Imagery change detection | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
-| Feature-level change alerts (someone edited a road I care about) | Adjacent | Subscriptions plus per-row history would deliver this; not built. |
-| Computer-vision-derived features (extracted from imagery) | Planned | Sketched; substantial pipeline work. |
-| Agentic data assistant | Planned | Postscript in [10 Discovery](10_DISCOVERY.md); intentionally aspirational. |
-
-### 17. Live data
-
-| Requirement | Status | Notes |
-|---|---|---|
-| Live vehicle / sensor feeds | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). Polling pattern over ETag'd tile or feature endpoints; backed by frequent batch refresh. |
-| Sub-second latency live data | Out of scope | The architecture is CDN-cached and batch-refreshed. Sub-second feeds need a streaming layer alongside, not inside, this platform. |
+| Serve 3D city or terrain models to standard 3D viewers (Cesium, TerriaJS) | Adjacent | The platform's storage and authorisation pattern accept standard 3D tile formats; a first-party serving and viewer integration is not built. The integration is sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
+| Manage and serve large visual assets (photos, models, scans) alongside spatial data | Planned | Sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md), drawing on the AWS Visual Asset Management System pattern. |
+| Serve point cloud data (LiDAR) to 3D viewers | Planned | The platform's substrate supports point-cloud-on-storage; the serving and viewer integration is sketched in [17 Further Directions](17_FURTHER_DIRECTIONS.md). |
 
 ---
 
 ## Non-functional requirements
 
-### 18. Performance
+### 14. Cost
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| Tile p50 latency under CDN warm | Met | Single-digit ms from CDN edge; no backend touch. |
-| Tile p99 latency on cold path | Met | Sub-second target on cold path; PMTiles + go-pmtiles + Fargate cold start. |
-| Feature query p50 latency | Met | Sub-second for bbox + attribute predicates against partitioned GeoParquet. |
-| Feature query p99 on large datasets | Partial | Tens of millions of rows: sub-second. Hundreds of millions: depends on selectivity; the architecture biases towards good selectivity via partitioning. Bulk analytical workloads belong elsewhere. |
-| Authoriser latency | Met | Single-digit ms with DynamoDB lookup; cached at API Gateway per request. |
-| CDN edge cache hit rate | Met | Tile classes are designed for high hit rate; per-credential cache keys keep auth correct. |
-| Routing query latency | Met | Tens to low hundreds of ms for typical metro-area routes. |
+| Pay for what you use, not for idle capacity | Met | Costs scale with traffic; when a service isn't being called, it isn't being paid for. |
+| Predictable cost as adoption grows | Met | Per-request pricing; no per-seat licensing. |
+| Low cost when traffic is low (out-of-hours, weekends, project gaps) | Met | Services scale to zero when idle. |
+| Lower ongoing cost than a heavy database-backed GIS stack | Met | The platform's design specifically targets this; the cost case is summarised in [content/index.md](index.md#the-economic-case) and supported by the comparisons in [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md). |
+| Avoid paying for fixed cloud-network bridges that idle most of the day | Met | The platform routes internal traffic via private endpoints rather than paid network gateways; this avoids a real per-zone monthly line item. |
+| Cost transparency per project, team, or tenant | Partial | Cost can be tagged and attributed using standard cloud cost tooling; a built-in per-tenant cost view is not provided. |
+| Budget ceilings with automatic alerts | Adjacent | Standard cloud budget tooling provides this outside the platform. |
 
-### 19. Scalability
+### 15. Scale and performance
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| Concurrent users | Met | No fixed ceiling; the read path is stateless and CDN-fronted. |
-| Concurrent tile request rate | Met | CDN absorbs the bulk; origin Fargate scales by ALB target. |
-| Dataset size (vector, rows) | Met | Hundreds of millions of rows demonstrated. Billion-row datasets need partition tuning; documented. |
-| Dataset size (raster, TB-scale) | Met | COG + MosaicJSON is the standard pattern; no platform-level ceiling. |
-| Number of datasets | Met | DynamoDB datasets table; tens of thousands of datasets handled. |
-| Geographic scaling (multi-region) | Adjacent | Single-region by default. Multi-region requires CloudFront + replicated S3 + DynamoDB Global Tables. Documented but not built. |
-| Scale to zero when idle | Met | Tile servers, query layer, raster servers all scale to zero on configurable idle timeouts. Lambda services have no warm pool. |
+| Map tiles served quickly to users anywhere in the world | Met | Edge-cached globally; typical responses in the tens of milliseconds. |
+| Fast feature queries against datasets up to hundreds of millions of records for typical area-bounded workloads | Met | Spatial filtering is pushed down to storage; queries return in sub-second time for typical workloads. |
+| Absorb unpredictable traffic spikes without pre-provisioning capacity | Met | Stateless services plus an edge cache absorb sudden load; this is one of the platform's defensible advantages over warm-pool architectures. |
+| Concurrent users limited only by what you choose to pay for | Met | The serving layer has no fixed user ceiling; it scales with traffic. |
+| Wake services on demand after idle periods | Partial | Scale-to-zero is supported; the first request to a fully-idle interactive service may wait 60–120 seconds for warm-up. Production deployments typically keep a minimum capacity rather than fully idle for interactive services. |
+| Many thousands of datasets per platform deployment | Met | Registry sized for organisation scale. |
+| Single platform deployment supports an entire organisation | Met | Multi-team, multi-tenant by design. |
+| Geographic redundancy across regions | Adjacent | Single-region by default. Multi-region is achievable but requires deliberate configuration. |
 
-### 20. Cost
+### 16. Reliability and recovery
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| Pay-per-request model | Met | Lambda, API Gateway, CloudFront, S3 — all consumption-priced. |
-| No always-on warm pools (default) | Met | Configurable per environment; production may keep minimum capacity for cold-start mitigation. |
-| Predictable cost at wide adoption | Met | Cost scales with traffic; no per-user licence model. |
-| CDN egress optimised | Met | Tile cache classes designed for high hit rate; per-credential keys on dynamic responses only. |
-| Storage cost optimisation (Intelligent-Tiering) | Met | S3 Intelligent-Tiering recommended; lifecycle rules for working areas. |
-| Per-tenant cost attribution | Partial | Tags + access logs allow cost allocation; a per-tenant cost dashboard is not built. |
-| Cost ceiling enforcement | Adjacent | AWS Budgets + alarms is the recommended pattern; not in-platform. |
+| Services stay available through normal infrastructure failures | Met | Multi-zone deployment within a region; stateless services recover automatically. |
+| Documented recovery plan for major incidents | Met | See [13 Operations](13_OPERATIONS.md). |
+| Data recovery to within minutes of any failure | Met | Storage versioning and point-in-time recovery on registry data. |
+| Recover from accidental file overwrite using storage-level versioning | Met | Prior versions of any stored object are recoverable. |
+| Restore the platform's metadata (registry, permissions) to any point in the last 35 days | Met | Continuous backup on the metadata store with point-in-time recovery. |
+| Recover from accidental deletion of a dataset | Met | Soft-delete with retention; restoration is a recorded operation. |
+| Tested disaster-recovery process | Partial | Plan is documented; production exercise is a deployment concern, not a platform-supplied test. |
+| Cross-region disaster recovery | Adjacent | Single-region by default; cross-region failover requires configuration work and is not built. |
 
-### 21. Reliability and availability
+### 17. Security
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| Multi-AZ where supported | Met | All AWS services default to multi-AZ within the deployed region. |
-| Stateless backends | Met | Tile servers, query layer, OGC Features API, raster servers — all stateless. |
-| Graceful degradation under load | Met | API Gateway throttling, CloudFront shielding; documented in [13 Operations](13_OPERATIONS.md). |
-| Disaster recovery plan | Met | Documented in [13 Operations](13_OPERATIONS.md). RTO/RPO targets vary by component. |
-| RTO (recovery time objective) | Partial | Stateless services: minutes. Stateful (DynamoDB, S3): determined by region. Cross-region DR is adjacent. |
-| RPO (recovery point objective) | Met | S3 versioning + DynamoDB PITR give RPO measured in minutes. |
-| Health checks and self-healing | Met | ALB health checks; ECS service recovery; CloudWatch alarms wired to PagerDuty integration points. |
+| All traffic encrypted end to end | Met | Standard practice across every component. |
+| Data encrypted at rest | Met | Storage encryption with customer-managed keys supported. |
+| No backend services reachable from the public internet | Met | One controlled public entry point; everything else is private. |
+| Least-privilege internal access between components | Met | Per-service permissions documented. |
+| Access credentials stored safely (never in plain text) | Met | Hashed and managed via the cloud secret store. |
+| Cap the damage of a leaked credential to the scope it was issued for | Met | Credentials issued to a person drop to public-only by default; credentials issued to a group inherit only that group's permissions at viewer level. A leaked credential can never exercise more than what it was issued for. |
+| Independent security review and penetration testing | Out of scope | The platform's architecture is shaped to be testable (small attack surface, single ingress); the test itself is the deploying team's operational responsibility. |
+| Software bill of materials and supply-chain scanning | Adjacent | Standard container scanning is in place; a published bill of materials is a deployment concern. |
 
-### 22. Security
+### 18. Compliance and data governance
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| TLS in transit | Met | Public endpoints via CloudFront; internal traffic over VPC. |
-| Encryption at rest | Met | S3 SSE, DynamoDB encryption, KMS-managed keys recommended. |
-| VPC-only internal traffic | Met | ALB is internal; backends not reachable from the public internet. |
-| API Gateway as sole public entry | Met | VPC Link to internal ALB. |
-| IAM least-privilege | Met | Per-service IAM roles documented in [12 Deployment](12_DEPLOYMENT.md). |
-| API key hashing | Met | SHA-256; raw key returned only at issuance. |
-| Audit logging | Partial | Structured logs land in CloudWatch; queryable audit surface is not built. |
-| Secret management | Met | Secrets Manager for issuer keys, signing keys; no secrets in code or environment. |
-| Dependency scanning | Adjacent | Standard ECR scanning; in-platform SBOM publication is not built. |
-| Penetration testing posture | Out of scope | A platform-level requirement that the deploying team operationalises. The platform's architecture is shaped for it (small attack surface, single ingress, authoriser in front of everything). |
+| Data stays in a configurable single region | Met | Region is a deployment parameter; data does not cross regions. |
+| Audit trail of access and changes for sensitive data | Partial | Per-record history plus access logs are captured; reviewing them today uses standard query tools rather than a dedicated UI. |
+| Wind down a dataset through visible lifecycle states (active → deprecated → retired → archived) rather than silent deletion | Met | Each transition is observable, audited, and reversible up to the archive step. See [10 Discovery](10_DISCOVERY.md). |
+| Configurable retention for logs and historical records | Met | Standard retention controls. |
+| Apply different retention to live data versus historical change records | Met | Per-dataset history retention is configurable; lifecycle rules differ per data class. |
+| Classify datasets (e.g. public, internal, restricted) | Adjacent | Tagging is available; a structured classification taxonomy is the deploying organisation's choice. |
+| Respond to data subject access requests (GDPR-style) | Adjacent | The platform supports the underlying queries; a self-service request portal is not built. |
+| Hard-delete records on request (right to be forgotten) | Adjacent | Hard delete is supported; a request-driven automated workflow is not built. |
+| Certified for regulated industries (HIPAA, PCI-DSS) | Out of scope | The platform's architecture admits regulated deployment but does not itself ship with certification. The deploying organisation operates within their own accreditation. |
 
-### 23. Compliance and data governance
+### 19. Operability
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| Single-region data residency (default) | Met | Deployed in one region; data does not cross region boundaries. |
-| Configurable region | Met | Region is a deployment parameter. |
-| Audit trail for sensitive datasets | Met | Per-row history + access logs combine into an audit story. |
-| GDPR-style data subject access requests | Adjacent | The platform supports per-user data extraction by querying the datasets; a self-service DSAR surface is not built. |
-| Right-to-be-forgotten | Adjacent | Hard delete (vs soft delete) is supported per-row; an automated DSAR-driven purge is not built. |
-| Data classification tagging | Adjacent | Dataset metadata supports tags; a structured classification taxonomy is the deploying team's choice. |
-| Logging retention configuration | Met | CloudWatch retention configurable per log group. |
-| Regulated-industry deployment (HIPAA, PCI) | Out of scope | The architecture admits regulated deployment, but the platform itself does not ship with certification. The deploying team operates within their accreditation. |
+| Centralised monitoring of platform health | Met | Dashboards per service group documented in [13 Operations](13_OPERATIONS.md). |
+| Alarms for common failure modes | Met | Standard alarms documented; integration with on-call tooling is a deployment detail. |
+| Runbooks for common operational incidents | Met | See [13 Operations](13_OPERATIONS.md). |
+| Trace each edit through its workflow execution for audit and troubleshooting | Met | Each edit produces a visual workflow execution that can be inspected end to end. |
+| Cancel an in-flight edit job and free the dataset for the next one | Met | A cancel operation transitions the job and releases the per-dataset queue. |
+| Predictable deployment process (blue/green, rolling updates) | Met | Standard cloud deployment patterns used throughout. |
+| Configuration captured as code | Met | The recommended pattern; the design is implementation-independent. |
+| Capacity guidance for sizing decisions | Met | See [12 Deployment](12_DEPLOYMENT.md). |
 
-### 24. Operability
+### 20. Standards your tools and partners can rely on
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| Centralised monitoring | Met | CloudWatch dashboards per service group; documented in [13 Operations](13_OPERATIONS.md). |
-| Alarm definitions | Met | Standard alarms documented; PagerDuty integration is a deployment detail. |
-| Runbooks for common incidents | Met | Documented in [13 Operations](13_OPERATIONS.md). |
-| DR playbook | Met | Documented in [13 Operations](13_OPERATIONS.md). |
-| Cost dashboards | Partial | Cost Explorer recommended; per-service cost dashboards are not pre-built. |
-| Capacity planning guidance | Met | Documented in [12 Deployment](12_DEPLOYMENT.md). |
-| Blue/green deployment | Met | Fargate service deployment with rolling update; Lambda alias-based traffic shifting. |
-| Configuration as code | Met | Recommended pattern is CDK or Terraform; the corpus is implementation-independent. |
+| Standard map tile services (WMTS, WMS) so QGIS, ArcGIS, and any standards-compliant mapping client can read maps | Met | |
+| Standard feature services (OGC API Features) so applications can query individual records | Met | |
+| Standard coverage services (OGC API Coverages) so scientific applications can read elevation and continuous-field data | Met | |
+| Standard catalogue (STAC) so other systems can browse what's available | Met | |
+| Common cloud-native data formats (GeoParquet, Cloud-Optimised GeoTIFF) so downstream tools and other clouds can read the data directly | Met | |
 
-### 25. Standards compliance
+### 21. Vendor independence
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| OGC API Features | Met | Conformance classes documented. |
-| OGC API Coverages | Met | |
-| OGC WMTS | Met | |
-| OGC WMS | Met | |
-| OGC 3D Tiles (consumption) | Met | Compatible with Cesium / TerriaJS clients out of the box. |
-| STAC | Met | Items, collections, conformance. |
-| TileJSON | Met | Per dataset; per service surface. |
-| MVT | Met | The vector tile wire format. |
-| PMTiles | Met | The storage format for tile archives. |
-| COG / COPC | Met | Raster (COG) is standard; point cloud (COPC) is planned. |
-| GeoParquet | Met | Primary vector storage format. |
+| Open data formats throughout — no proprietary lock-in | Met | Every format the platform stores is open and standards-based. |
+| Open-source engines for the spatial work — no licensed software required | Met | All processing engines are open-source. |
+| Standard interfaces — no platform-specific client libraries required | Met | Any standards-compliant tool works. |
+| Data is exportable at any time | Met | The same interfaces clients read from work as export endpoints. |
+| Portable to another cloud provider if needed | Partial | The data formats and engines are portable; the cloud-specific networking and identity layers would need redesigning. The corpus is structured around this kind of substitution. See [12 Deployment](12_DEPLOYMENT.md). |
+| Individual components substitutable without rebuilding the platform | Met | Each component is documented behind a contract; alternative engines can be swapped in. The platform has done this in earnest (tile server replacement, catalogue replacement). |
 
-### 26. Vendor independence and portability
+### 22. Interoperating with an existing data platform (lakehouse, warehouse)
 
-| Requirement | Status | Notes |
+| What you get | Status | Notes |
 |---|---|---|
-| Open formats throughout | Met | PMTiles, GeoParquet, COG, MosaicJSON, STAC — all open. |
-| Standard interfaces | Met | OGC, STAC, TileJSON. |
-| Open-source engines | Met | DuckDB, go-pmtiles, Valhalla, GDAL, PDAL, Tippecanoe. |
-| Portable to other clouds | Partial | Substrate is portable; the AWS-specific layer (ALB rules, API Gateway authorisers, VPC Link, Cognito) is a redesign in another cloud. Documented in [12 Deployment](12_DEPLOYMENT.md). |
-| No proprietary lock-in for data | Met | Datasets can be exported via standard APIs at any time. |
-| Substitutable engines | Met | Each component is replaceable behind its contract: Valhalla ↔ OSRM, DuckDB ↔ Sedona, go-pmtiles ↔ Martin. |
-
-### 27. Maintainability
-
-| Requirement | Status | Notes |
-|---|---|---|
-| Modular components | Met | Each component has a small, contracted surface area. |
-| Documented design decisions | Met | [16 Design Decisions](16_DESIGN_DECISIONS.md). |
-| Documented prior iterations | Met | Each decision page records what was tried and why it changed. |
-| Clear contracts at component boundaries | Met | [02 Architecture](02_ARCHITECTURE.md), [03 Authorisation](03_AUTHORISATION.md), [04 Data Layout](04_DATA_LAYOUT.md). |
-| Low-skill operational footprint | Met | Most services are managed; no database admin role required. |
-| Documented upgrade paths for major engines | Partial | Engine substitution is documented; major version upgrades within a single engine are a standard release process. |
-
-### 28. Observability
-
-| Requirement | Status | Notes |
-|---|---|---|
-| Structured logging | Met | JSON logs across all components. |
-| Metrics per component | Met | CloudWatch standard metrics + custom per-service metrics. |
-| Distributed tracing | Partial | X-Ray supported on Lambda and ALB; full request-trace stitching across all components is not turn-key. |
-| Per-request audit | Partial | Logs carry caller + decision + dataset; an audit-query surface is not built. |
-| Cost-per-request attribution | Adjacent | Tagging supports it; a per-request cost view is not standard. |
+| Let an analytics platform (Databricks, Snowflake, BigQuery) read the platform's spatial data as an external table, without copying it | Met | The on-disk format and partition layout are directly readable by any modern analytical engine. See [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md). |
+| Ingest spatial data that was prepared, enriched, or modelled in the lakehouse, then distribute it widely through the platform | Met | The documented "lakehouse-as-source" pattern uses the analytics platform for heavy preparation and this platform for wide-scale serving. |
+| Avoid duplicating spatial governance between the lakehouse and the serving layer | Partial | Both systems can federate to the same identity provider and share the same storage; row-by-row permission passthrough between the two governance surfaces is not designed today. |
+| Replace the analytics platform's serving layer with this platform | Met | The platform's purpose is wide-scale serving and lightweight querying; analytical engines that are good at preparation are typically poor at high-concurrency tile and feature serving. |
+| Replace this platform's analytical query layer with the analytics platform | Met | For workloads that exceed what this platform's query layer is designed for, the lakehouse is the right home; the platform's catalogue points consumers at the right surface. |
 
 ---
 
@@ -395,19 +321,20 @@ The platform is positioned as a **state-of-the-art serverless spatial platform**
 
 If you are evaluating against a specific need:
 
-- **"Do we still need GeoServer?"** — Read §3 Vector serving, §4 Raster serving, §25 Standards compliance. Most GeoServer use cases are *Met*.
-- **"Can we run our editing workflow on this?"** — Read §10 Editing workflows, §11 Audit and history.
-- **"Can we replace our access-control mess?"** — Read §8 Authorisation, §9 User and group management.
-- **"Will this work for a BI / analytics workload?"** — Read §6 Spatial query, then read [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md). The answer is "use a lakehouse alongside, not instead."
-- **"Will this scale to our user base?"** — Read §18 Performance, §19 Scalability, §20 Cost.
-- **"Is this compliant with our security posture?"** — Read §22 Security, §23 Compliance.
-- **"Can we run this in [non-AWS cloud]?"** — Read §26 Vendor independence and the deployment chapter's cross-cloud notes.
+- **"Do we still need our existing map server?"** — Read §6 Serving data, §20 Standards. Most map-server use cases are *Met*.
+- **"Can we run our editing workflow on this?"** — Read §4 Editing, §5 History.
+- **"Can we replace our access-control patchwork?"** — Read §2 Controlling access.
+- **"Will this work for a BI or analytics workload?"** — Read §7 Analysis, then §22 Interoperating with an existing data platform, then [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md). The honest answer is "use a lakehouse alongside, not instead."
+- **"We already have a lakehouse — what does this add?"** — Read §22 Interoperating with an existing data platform and [18 Lakehouse Integration](18_LAKEHOUSE_INTEGRATION.md).
+- **"Will it scale to our user base?"** — Read §14 Cost, §15 Scale, §16 Reliability.
+- **"Is it compliant with our security posture?"** — Read §17 Security, §18 Compliance.
+- **"Can we run this in our preferred cloud?"** — Read §21 Vendor independence and the cross-cloud notes in [12 Deployment](12_DEPLOYMENT.md).
 
 ## When this document is wrong
 
-This is a snapshot. If you find a requirement here that the platform claims to meet but the implementation cannot, that is a documentation bug — log it, and the right page in the corpus should be amended. If you find a requirement marked *Adjacent* or *Planned* that you actually need, that is useful evaluation signal: either the platform needs that work commissioned, or another platform is a better fit for your project.
+This is a snapshot. If you find a requirement marked *Met* that the platform can't actually deliver, that is a documentation bug — log it, and the relevant chapter should be amended. If you find something marked *Adjacent* or *Planned* that you actually need, that is useful evaluation signal: either the platform needs that work commissioned, or another platform is a better fit for your project.
 
-The point of this document is to make the *fit conversation* short and concrete, not to dress the platform in capabilities it does not have.
+The point of this document is to make the fit conversation short and concrete, not to dress the platform in capabilities it does not have.
 
 ---
 
