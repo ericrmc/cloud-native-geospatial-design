@@ -2,6 +2,31 @@
 
 Clients need to know what datasets exist before they can query them. The platform offers two discovery surfaces: a **STAC API** (Lambda) for spatial-data catalogues and a **catalogue API** (the Policy API Lambda's `/rest/datasets/*` routes) for richer admin metadata. Both read from the same DynamoDB dataset registry; they differ in what they expose and to whom.
 
+## Discovery surfaces at a glance
+
+Two surfaces, one registry. The STAC API renders the public catalogue contract; the catalogue API exposes the richer operational metadata that administrators need. Both are thin Lambdas over the same DynamoDB datasets table; a scheduled sync scanner keeps the registry honest against S3 without ever creating or activating datasets on its own.
+
+```mermaid
+flowchart LR
+    CLIENT["Client<br/>(viewer, GIS, admin)"]
+    APIGW["API Gateway<br/>+ Lambda authoriser"]
+    STAC["STAC API<br/>(Lambda)"]
+    CAT["Catalogue API<br/>(Lambda, /rest/datasets)"]
+    REG[("DynamoDB<br/>datasets registry")]
+    SYNC["Sync scanner<br/>(EventBridge Lambda)"]
+    S3[("S3<br/>source/ pmtiles/ cogs/")]
+
+    CLIENT --> APIGW
+    APIGW --> STAC
+    APIGW --> CAT
+    STAC --> REG
+    CAT --> REG
+    SYNC -- "every 15 min" --> REG
+    SYNC --> S3
+```
+
+The rest of this document specifies what each surface exposes, what the scanner does and does not do, and how permissions filter the catalogue per caller.
+
 > **Prior iteration.** The original platform ran STAC as a **Fargate service backed by [pgSTAC](https://github.com/stac-utils/pgstac)** on an Aurora PostgreSQL Serverless v2 cluster — the same shape used by Development Seed's [eoAPI](https://eoapi.dev/) (the closest peer assembly to this platform, as discussed in [Peer stacks and prior art](16_DESIGN_DECISIONS.md) within [16 Design Decisions](16_DESIGN_DECISIONS.md)). When the rest of the platform moved off the database (vector to PMTiles + GeoParquet, raster to COGs), pgSTAC was left as the last database dependency. It was eventually replaced with a small Lambda that reads directly from the DynamoDB datasets table. The STAC surface is small enough that no separate cataloguing engine is needed; the registry *is* the catalogue. This is also why STAC items are not stored separately — the platform's notion of an "item" is a dataset, and per-asset items are returned by reference to the OGC/tile endpoints.
 
 ## STAC

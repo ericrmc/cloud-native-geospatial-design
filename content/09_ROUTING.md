@@ -2,6 +2,32 @@
 
 Network routing — calculating drive-time isochrones, optimal routes between points, map-matching GPS traces to roads, and snapping coordinates to the nearest road — requires a road graph and graph traversal algorithms. The platform's spatial query engine (DuckDB) does not have these. Routing is handled by a dedicated component.
 
+## Service shape at a glance
+
+Routing is a dedicated Fargate service backed by Valhalla, with the road graph baked into the container image at build time from a regional OSM extract. At runtime there is no external dependency; clients reach the engine through the query layer, which wraps routing operations as GraphQL fields returning the same `Feature` type as every other spatial operation.
+
+```mermaid
+flowchart LR
+    subgraph Build["Image build"]
+        OSM["OSM extract<br/>(.osm.pbf)"]
+        TB["Valhalla tile builder"]
+        IMG["Container image<br/>(graph baked in)"]
+        OSM --> TB --> IMG
+    end
+
+    subgraph Runtime["Runtime"]
+        CLIENT["Client"]
+        QL["Query layer<br/>(GraphQL on Fargate)"]
+        VAL["Valhalla engine<br/>(Fargate service)"]
+        CLIENT -- "GraphQL: route,<br/>isochrone, match" --> QL
+        QL -- "HTTP" --> VAL
+    end
+
+    IMG -. deployed as .-> VAL
+```
+
+The rest of this document specifies the engine, the operations, the data lifecycle, and the integration contract with the query layer.
+
 ## Engine choice: Valhalla
 
 The recommended engine is **Valhalla** (open-source, originated by Mapzen, maintained by the OSM community). The rationale:

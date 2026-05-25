@@ -4,6 +4,28 @@ Vector tiles are served from PMTiles archives in S3 via byte-range reads. This i
 
 > **Prior iteration.** An earlier version of the platform served vector tiles with **Martin** (a Rust tile server) reading from PostgreSQL/PostGIS. That meant an always-on database in the read path, and Martin's PMTiles support did not re-read the file on update (a restart was needed when tiles changed). Both problems were solved by switching to **go-pmtiles** reading directly from S3: no database, automatic ETag-based refresh on atomic swap, and a much smaller operational footprint. The vector-tile path's URL contract (`/tiles/vector/...`) is unchanged from the Martin era; only the implementation behind it moved.
 
+## Serving shape at a glance
+
+Vector tiles take a single, short path: a map client requests a tile URL, CloudFront serves it from the edge cache when it can, and otherwise a small Fargate tile server reads byte ranges from a PMTiles archive in S3. There is no database, no per-request rendering, and no per-tile compute — just byte-range reads over HTTP.
+
+```mermaid
+flowchart LR
+    CLIENT["Map client"]
+    CF["CloudFront"]
+    APIGW["API Gateway<br/>+ Lambda authoriser"]
+    TILE["go-pmtiles<br/>(Fargate)"]
+    S3[("S3<br/>pmtiles/{dataset}.pmtiles")]
+
+    CLIENT --> CF
+    CF -- "cache miss" --> APIGW
+    APIGW --> TILE
+    TILE -- "byte-range read<br/>(ETag-aware)" --> S3
+    S3 --> TILE --> APIGW --> CF
+    CF --> CLIENT
+```
+
+The rest of this document specifies the file format, the serving endpoints, and the atomic-update protocol that lets new tiles appear without restart.
+
 ## Format
 
 **PMTiles** is a single-file archive of Mapbox Vector Tiles. The file contains:
