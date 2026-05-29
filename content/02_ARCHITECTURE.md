@@ -4,64 +4,89 @@ This document describes the overall shape of the platform: the layers, the compo
 
 ## Platform at a glance
 
-The platform organises around four user-facing capabilities — ingest, manage, serve, and discover. Vector data enters as feature edits or bulk upload, gets validated, partitioned, tiled, and promoted; raster data is registered via MosaicJSON over COGs already on S3. Both types are served through standards-compliant APIs and surfaced in a single STAC catalogue scoped to what each user is allowed to see.
+This is a C4 *container* view: the people who use the platform, the deployable containers that make it up, the technology each runs on (in `[brackets]`), and — importantly — what each container reads from. Solid arrows are request and data flow; dashed arrows are token validation and catalogue links.
+
+Three kinds of user reach the platform through a single public entry (CloudFront + API Gateway), are authorised once at the edge, and are routed by the internal ALB to the container that serves their request. Serving APIs read cloud-native files directly from S3 — vector tiles from PMTiles, raster from COGs, features and spatial queries from GeoParquet via DuckDB. The STAC catalogue is **discovery only**: it advertises which services are available for each dataset and is *not* in the data path — clients read tiles, features, and coverages straight from the serving APIs. The editing pipeline is the write path; the Policy API and identity provider are the control plane alongside.
 
 ```mermaid
 flowchart TB
-    subgraph IngestV["Ingest — Vector"]
-        FE["Feature Edits<br/>(GeoJSON via Features API)"]
-        BU["Bulk Upload<br/>(GeoParquet via presigned URL)"]
-        LAND[("S3 Landing Zone")]
-        subgraph Jobs["Jobs service"]
-            VAL["Validate"]
-            GEN["Generate<br/>(GeoParquet + PMTiles)"]
-            PROM["Promote"]
+    consumer(["Data Consumer<br/>Web map · QGIS · ArcGIS · app"])
+    editor(["Data Editor<br/>Contributes &amp; reviews edits"])
+    admin(["Administrator<br/>Manages access &amp; datasets"])
+
+    subgraph platform["Cloud-Native Spatial Platform"]
+        direction TB
+        CF["CloudFront + API Gateway<br/>[managed] — TLS, edge cache, single public entry"]
+        AZ["Lambda Authoriser<br/>[Lambda] — JWT / API-key → permission context"]
+        ALB["Internal ALB<br/>[private] — path routing, injects X-Auth-* headers"]
+
+        subgraph serve["Serving APIs — read path"]
+            direction TB
+            VT["Vector Tile Server<br/>[Fargate · go-pmtiles]"]
+            RT["Raster Tile Server<br/>[Fargate · TiTiler]"]
+            WMTS["WMTS / WMS Proxy<br/>[Fargate]"]
+            FEAT["OGC Features API<br/>[Lambda]"]
+            QUERY["Query Layer / GraphQL<br/>[Fargate · DuckDB]"]
+            COV["Coverages API<br/>[Fargate]"]
+            ROUTE["Routing Engine<br/>[Fargate · Valhalla]"]
         end
-        FE --> LAND
-        BU --> LAND
-        LAND --> VAL --> GEN --> PROM
+
+        STAC["STAC Catalogue API<br/>[Lambda] — discovery, scoped to access"]
+
+        subgraph write["Editing Pipeline — write path"]
+            direction TB
+            EDIT["Editing API · Upload Gate<br/>[Lambda]"]
+            SFN["Step Functions<br/>Validate → Generate → Promote"]
+        end
+
+        POLICY["Policy API<br/>[Lambda] — groups, API keys, RLS, registry"]
     end
 
-    subgraph Manage["Manage"]
-        REG["Register Dataset"]
-        CFG["Configure Access<br/>(groups, API keys, sharing)"]
-        INV["Invite Users"]
-        REG --> CFG --> INV
-    end
+    S3[("S3<br/>PMTiles · COGs · GeoParquet · history · landing")]
+    DDB[("DynamoDB<br/>policies · registry · jobs · sessions · keys")]
+    IDP[("Cognito / external OIDC IdP")]
 
-    subgraph RasterIn["Raster"]
-        MOS["Ingest MosaicJSON<br/>(references COGs on S3)"]
-        COGS[("COGs on S3")]
-        MOS --> COGS
-    end
+    consumer -->|HTTPS + API key or JWT| CF
+    editor -->|HTTPS + JWT| CF
+    admin -->|HTTPS + JWT| CF
 
-    subgraph Serve["Serve"]
-        OGCF["OGC Features<br/>(GeoParquet)"]
-        VT["Vector Tiles<br/>(PMTiles)"]
-        RT["Raster Tiles / WMTS<br/>WMS (time-enabled)"]
-        OGCC["OGC Coverages<br/>(elevation)"]
-    end
+    CF -->|invoke| AZ
+    AZ -.->|validate token| IDP
+    AZ -.->|resolve groups, RLS| DDB
+    CF -->|VPC Link| ALB
 
-    subgraph Discover["Discover"]
-        STAC["STAC Catalogue<br/>(scoped to user access)"]
-    end
+    ALB --> VT & RT & WMTS & FEAT & QUERY & COV & ROUTE
+    ALB --> STAC
+    ALB --> EDIT
+    ALB --> POLICY
 
-    CONS["Web Maps / QGIS /<br/>ArcGIS / Apps"]
+    STAC -.->|advertises service endpoints per dataset| serve
 
-    PROM --> OGCF
-    PROM --> VT
-    COGS --> RT
-    COGS --> OGCC
-    OGCF --> STAC
-    VT --> STAC
-    RT --> STAC
-    OGCC --> STAC
-    STAC --> CONS
+    VT -->|byte-range read PMTiles| S3
+    RT -->|byte-range read COGs| S3
+    COV -->|read COGs| S3
+    QUERY -->|partition read GeoParquet| S3
+    FEAT -->|façade over| QUERY
+    WMTS -->|proxies| RT
+    STAC -->|registry read| DDB
+
+    EDIT -->|landing upload| S3
+    EDIT -->|session &amp; job state| DDB
+    EDIT --> SFN
+    SFN -->|validate · generate · promote artefacts| S3
+    POLICY -->|policies, keys, registry| DDB
+
+    classDef person fill:#08427b,color:#ffffff,stroke:#052e56;
+    classDef store fill:#f5f5f5,color:#111111,stroke:#999999;
+    class consumer,editor,admin person;
+    class S3,DDB,IDP store;
 ```
 
 The rest of this document decomposes the same platform into technical layers and request flows.
 
 ## Five layers
+
+The container view above shows relationships and reads; this view shows the same platform as the five-layer skeleton the rest of this document is organised around — edge, read, write, admin, and data — and the control flow between them.
 
 ```mermaid
 flowchart TB
@@ -104,17 +129,17 @@ flowchart TB
     end
 
     CF --> APIGW --> AUTH
-    AUTH -. reads .-> DDB
+    AUTH -. reads policies/RLS .-> DDB
     APIGW -- VPC Link --> ALB[Internal ALB]
     ALB --> Read & Write & Admin
     AUTH -. validates JWT .-> COG
-    Read --> S3
-    Read --> DDB
+    Read -->|"tiles, features, coverages"| S3
+    Read -->|"registry, RLS lookups"| DDB
     Write --> SFN --> VAL --> GEN --> PROMOTE
-    Write --> S3
-    Write --> DDB
-    Admin --> DDB
-    Admin --> S3
+    Write -->|"landing, generated artefacts"| S3
+    Write -->|"jobs, sessions, history"| DDB
+    Admin -->|"policies, keys, registry"| DDB
+    Admin -->|"history vacuum, event log"| S3
 ```
 
 ### Edge layer
