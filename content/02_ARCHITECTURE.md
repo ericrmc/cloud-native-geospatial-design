@@ -138,7 +138,7 @@ flowchart TB
     AUTH -. validates JWT .-> COG
     Read -->|"tiles, features, coverages"| S3
     Read -->|"registry, RLS lookups"| DDB
-    Write --> SFN --> VAL --> GEN --> PROMOTE
+    EDIT --> SFN --> VAL --> GEN --> PROMOTE
     Write -->|"landing, generated artefacts"| S3
     Write -->|"jobs, sessions, history"| DDB
     Admin -->|"policies, keys, registry"| DDB
