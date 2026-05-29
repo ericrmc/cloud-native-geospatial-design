@@ -6,7 +6,7 @@ This document describes the overall shape of the platform: the layers, the compo
 
 This is a C4 *container* view: the people who use the platform, the deployable containers that make it up, the technology each runs on (in `[brackets]`), and — importantly — what each container reads from. Solid arrows are request and data flow; dashed arrows are token validation and catalogue links.
 
-Three kinds of user reach the platform through a single public entry (CloudFront + API Gateway), are authorised once at the edge, and are routed by the internal ALB to the container that serves their request. Serving APIs read cloud-native files directly from S3 — vector tiles from PMTiles, raster from COGs, features and spatial queries from GeoParquet via DuckDB. The query layer is the one serving component that fans out further: it calls the routing engine for route, isochrone, and map-match operations, reads the dataset registry and row-level-security policies from DynamoDB, and can register new datasets there. The STAC catalogue is **discovery only**: it advertises which services are available for each dataset and is *not* in the data path — clients read tiles, features, and coverages straight from the serving APIs. The editing pipeline is the write path; the Policy API and identity provider are the control plane alongside.
+Three kinds of user reach the platform through a single public entry. Every request passes through the **security layer** — CloudFront and the API Gateway, the Lambda authoriser, and the internal ALB — before any backend is touched; nothing else is publicly reachable. The authoriser resolves identity once against the identity provider and DynamoDB, and the ALB routes the request to the container that serves it. Serving APIs read cloud-native files directly from S3 — vector tiles from PMTiles, raster from COGs, features and spatial queries from GeoParquet via DuckDB. The query layer is the one serving component that fans out further: it calls the routing engine for route, isochrone, and map-match operations, reads the dataset registry and row-level-security policies from DynamoDB, and can register new datasets there. The STAC catalogue is **discovery only** — it is *not* in the data path; clients read tiles, features, and coverages straight from the serving APIs. The editing pipeline is the write path; the Policy API is the admin control plane alongside.
 
 ```mermaid
 flowchart TB
@@ -16,9 +16,13 @@ flowchart TB
 
     subgraph platform["Cloud-Native Spatial Platform"]
         direction TB
-        CF["CloudFront + API Gateway<br/>[managed] — TLS, edge cache, single public entry"]
-        AZ["Lambda Authoriser<br/>[Lambda] — JWT / API-key → permission context"]
-        ALB["Internal ALB<br/>[private] — path routing, injects X-Auth-* headers"]
+
+        subgraph security["Security Layer — every request passes through"]
+            direction LR
+            CF["CloudFront + API Gateway<br/>[managed]"]
+            AZ["Lambda Authoriser<br/>[Lambda]"]
+            ALB["Internal ALB<br/>[private]"]
+        end
 
         subgraph serve["Serving APIs — read path"]
             direction TB
@@ -31,52 +35,54 @@ flowchart TB
             ROUTE["Routing Engine<br/>[Fargate · Valhalla]"]
         end
 
-        STAC["STAC Catalogue API<br/>[Lambda] — discovery, scoped to access"]
+        subgraph control["Discovery &amp; Admin"]
+            direction LR
+            STAC["STAC Catalogue API<br/>[Lambda] · discovery"]
+            POLICY["Policy API<br/>[Lambda] · admin"]
+        end
 
         subgraph write["Editing Pipeline — write path"]
-            direction TB
+            direction LR
             EDIT["Editing API · Upload Gate<br/>[Lambda]"]
             SFN["Step Functions<br/>Validate → Generate → Promote"]
         end
 
-        POLICY["Policy API<br/>[Lambda] — groups, API keys, RLS, registry"]
+        subgraph data["Data Layer"]
+            direction LR
+            S3[("S3<br/>PMTiles · COGs · GeoParquet · history")]
+            DDB[("DynamoDB<br/>registry · policies · jobs · keys")]
+            IDP[("Cognito / external OIDC IdP")]
+        end
     end
 
-    S3[("S3<br/>PMTiles · COGs · GeoParquet · history · landing")]
-    DDB[("DynamoDB<br/>policies · registry · jobs · sessions · keys")]
-    IDP[("Cognito / external OIDC IdP")]
-
-    consumer -->|HTTPS + API key or JWT| CF
-    editor -->|HTTPS + JWT| CF
-    admin -->|HTTPS + JWT| CF
+    consumer -->|API key / JWT| CF
+    editor -->|JWT| CF
+    admin -->|JWT| CF
 
     CF -->|invoke| AZ
-    AZ -.->|validate token| IDP
-    AZ -.->|resolve groups, RLS| DDB
     CF -->|VPC Link| ALB
+    AZ -.->|validate token| IDP
+    AZ -.->|groups, RLS| DDB
 
-    ALB --> VT & RT & WMTS & FEAT & QUERY & COV & ROUTE
-    ALB --> STAC
-    ALB --> EDIT
-    ALB --> POLICY
-
-    STAC -.->|advertises service endpoints per dataset| serve
+    ALB --> serve
+    ALB --> control
+    ALB --> write
 
     VT -->|byte-range read PMTiles| S3
     RT -->|byte-range read COGs| S3
     COV -->|read COGs| S3
     QUERY -->|partition read GeoParquet| S3
-    QUERY -->|routing · isochrones · map-match| ROUTE
-    QUERY -->|read &amp; register datasets · read RLS| DDB
+    QUERY -->|routing, isochrones, map-match| ROUTE
+    QUERY -->|read &amp; register datasets, RLS| DDB
     FEAT -->|façade over| QUERY
     WMTS -->|proxies| RT
     STAC -->|registry read| DDB
+    POLICY -->|policies, keys, registry| DDB
 
     EDIT -->|landing upload| S3
     EDIT -->|session &amp; job state| DDB
     EDIT --> SFN
-    SFN -->|validate · generate · promote artefacts| S3
-    POLICY -->|policies, keys, registry| DDB
+    SFN -->|generated artefacts| S3
 
     classDef person fill:#08427b,color:#ffffff,stroke:#052e56;
     classDef store fill:#f5f5f5,color:#111111,stroke:#999999;
