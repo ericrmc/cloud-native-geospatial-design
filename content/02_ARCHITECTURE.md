@@ -4,10 +4,6 @@ This document describes the overall shape of the platform: the layers, the compo
 
 ## Platform at a glance
 
-This is a C4 *container* view: the people who use the platform, the deployable containers that make it up, the technology each runs on (in `[brackets]`), and — importantly — what each container reads from. Solid arrows are request and data flow; dashed arrows are token validation and catalogue links.
-
-Three kinds of user reach the platform through a single public entry. Every request passes through the **security layer** — CloudFront and the API Gateway, the Lambda authoriser, and the internal ALB — before any backend is touched; nothing else is publicly reachable. The authoriser resolves identity once against the identity provider and DynamoDB, and the ALB routes the request to the container that serves it. Serving APIs read cloud-native files directly from S3 — vector tiles from PMTiles, raster from COGs, features and spatial queries from GeoParquet via DuckDB. The query layer is the one serving component that fans out further: it calls the routing engine for route, isochrone, and map-match operations, reads the dataset registry and row-level-security policies from DynamoDB, and can register new datasets there. The STAC catalogue is **discovery only** — it is *not* in the data path; clients read tiles, features, and coverages straight from the serving APIs. The editing pipeline is the write path; the Policy API is the admin control plane alongside.
-
 ```mermaid
 flowchart TB
     consumer(["Data Consumer<br/>Web map · QGIS · ArcGIS · app"])
