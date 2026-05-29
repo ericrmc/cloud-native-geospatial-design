@@ -22,17 +22,7 @@ flowchart TB
             CF["CloudFront + API Gateway<br/>[managed]"]
             AZ["Lambda Authoriser<br/>[Lambda]"]
             ALB["Internal ALB<br/>[private]"]
-        end
-
-        subgraph serve["Serving APIs — read path"]
-            direction TB
-            VT["Vector Tile Server<br/>[Fargate · go-pmtiles]"]
-            RT["Raster Tile Server<br/>[Fargate · TiTiler]"]
-            WMTS["WMTS / WMS Proxy<br/>[Fargate]"]
-            FEAT["OGC Features API<br/>[Lambda]"]
-            QUERY["Query Layer / GraphQL<br/>[Fargate · DuckDB]"]
-            COV["Coverages API<br/>[Fargate]"]
-            ROUTE["Routing Engine<br/>[Fargate · Valhalla]"]
+            IDP[("Cognito / OIDC IdP")]
         end
 
         subgraph control["Discovery &amp; Admin"]
@@ -47,12 +37,19 @@ flowchart TB
             SFN["Step Functions<br/>Validate → Generate → Promote"]
         end
 
-        subgraph data["Data Layer"]
-            direction LR
-            S3[("S3<br/>PMTiles · COGs · GeoParquet · history")]
-            DDB[("DynamoDB<br/>registry · policies · jobs · keys")]
-            IDP[("Cognito / external OIDC IdP")]
+        subgraph serve["Serving APIs — read path"]
+            direction TB
+            VT["Vector Tile Server<br/>[Fargate · go-pmtiles]"]
+            RT["Raster Tile Server<br/>[Fargate · TiTiler]"]
+            WMTS["WMTS / WMS Proxy<br/>[Fargate]"]
+            FEAT["OGC Features API<br/>[Lambda]"]
+            QUERY["Query Layer / GraphQL<br/>[Fargate · DuckDB]"]
+            COV["Coverages API<br/>[Fargate]"]
+            ROUTE["Routing Engine<br/>[Fargate · Valhalla]"]
         end
+
+        DDB[("DynamoDB · registry · policies · jobs")]
+        S3[("S3 — object store<br/>PMTiles · COGs · GeoParquet · history")]
     end
 
     consumer -->|API key / JWT| CF
@@ -62,32 +59,34 @@ flowchart TB
     CF -->|invoke| AZ
     CF -->|VPC Link| ALB
     AZ -.->|validate token| IDP
-    AZ -.->|groups, RLS| DDB
+    AZ -.-> DDB
 
     ALB --> serve
     ALB --> control
     ALB --> write
 
-    VT -->|byte-range read PMTiles| S3
-    RT -->|byte-range read COGs| S3
-    COV -->|read COGs| S3
-    QUERY -->|partition read GeoParquet| S3
-    QUERY -->|routing, isochrones, map-match| ROUTE
-    QUERY -->|read &amp; register datasets, RLS| DDB
-    FEAT -->|façade over| QUERY
+    VT -->|PMTiles| S3
+    RT -->|COGs| S3
+    COV -->|COGs| S3
+    QUERY -->|GeoParquet| S3
+    QUERY --> ROUTE
+    QUERY -.-> DDB
+    FEAT -->|façade| QUERY
     WMTS -->|proxies| RT
-    STAC -->|registry read| DDB
-    POLICY -->|policies, keys, registry| DDB
+    STAC -.-> DDB
+    POLICY -.-> DDB
 
-    EDIT -->|landing upload| S3
-    EDIT -->|session &amp; job state| DDB
+    EDIT -->|landing| S3
+    EDIT -.-> DDB
     EDIT --> SFN
-    SFN -->|generated artefacts| S3
+    SFN -->|artefacts| S3
 
     classDef person fill:#08427b,color:#ffffff,stroke:#052e56;
-    classDef store fill:#f5f5f5,color:#111111,stroke:#999999;
+    classDef store fill:#eef3f8,color:#222,stroke:#9bb;
+    classDef muted fill:#fafafa,color:#999,stroke:#d5d5d5,stroke-dasharray:3 3;
     class consumer,editor,admin person;
-    class S3,DDB,IDP store;
+    class S3,IDP store;
+    class DDB muted;
 ```
 
 The rest of this document decomposes the same platform into technical layers and request flows.
